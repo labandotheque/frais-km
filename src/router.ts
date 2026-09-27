@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+
 import VillesEtapesView from './views/VillesEtapesView.vue'
 import KmDirectsView from './views/KmDirectsView.vue'
 import CovoiturageView from './views/CovoiturageView.vue'
@@ -10,7 +11,7 @@ export const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
   scrollBehavior: () => ({ top: 0 })
 })
