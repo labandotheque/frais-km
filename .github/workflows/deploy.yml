@@ -1,0 +1,71 @@
+name: Déploiement GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Permet aussi de relancer un déploiement manuellement depuis l'onglet Actions.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# N'autorise qu'un seul déploiement à la fois ; annule les déploiements en
+# attente si un nouveau push arrive entretemps.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Installer les dépendances
+        run: pnpm install --frozen-lockfile
+
+      - name: Construire le site
+        run: pnpm build
+        env:
+          # Le site est servi sous https://<user>.github.io/<repo>/ : `base`
+          # doit correspondre au nom du dépôt (voir vite.config.js). Si ce
+          # dépôt est renommé, ou si tu déploies plutôt sur un "user/org page"
+          # (<user>.github.io racine), ajuste cette valeur en conséquence
+          # (mets "/" pour une racine).
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+
+      - name: Fallback SPA pour le mode history
+        # GitHub Pages n'a pas de réécriture serveur : sans ce fichier, ouvrir
+        # directement une URL profonde (ex: /parametres) renverrait un 404.
+        # Copier index.html en 404.html fait que GitHub Pages sert la même
+        # appli sur n'importe quelle route, et vue-router prend ensuite le
+        # relais côté client pour afficher la bonne vue.
+        run: cp dist/index.html dist/404.html
+
+      - name: Préparer l'artefact Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Déployer sur GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

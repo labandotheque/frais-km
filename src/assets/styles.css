@@ -1,0 +1,9 @@
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+.leaflet-container {
+  font-family: inherit;
+}
