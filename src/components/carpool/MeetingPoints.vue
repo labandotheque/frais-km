@@ -19,7 +19,7 @@
         <div class="flex items-center gap-1.5">
             <button @click="autoDetectMeetingPoints"
                     class="text-[11px] font-medium text-slate-500 hover:text-slate-900 px-2.5 py-1.5 rounded-md hover:bg-slate-100 transition">
-                Suggérer
+                Suggestion automatique
             </button>
 
             <button @click="addMeetingPoint"
