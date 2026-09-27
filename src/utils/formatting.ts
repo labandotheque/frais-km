@@ -17,9 +17,9 @@ export const formatAddressSecondary = (item) => {
 
 export const addressTypeIcon = (item) => {
   const type = item && item.properties ? item.properties.type : ''
-  if (type === 'housenumber') return '🏠'
-  if (type === 'street') return '🛣️'
-  if (type === 'municipality') return '🏙️'
+  // if (type === 'housenumber') return '🏠'
+  // if (type === 'street') return '🛣️'
+  // if (type === 'municipality') return '🏙️'
   return '📍'
 }
 

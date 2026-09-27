@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/* Petites règles globales qui ne se prêtent pas bien aux classes utilitaires
+   (icônes de marqueurs Leaflet en HTML brut, scrollbar des listes). */
+
+/* .leaflet-container {
+  font-family: inherit;
+}
+
+.custom-marker {
+  background: transparent;
+  border: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 999px;
+} */
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+.leaflet-container {
+  font-family: inherit;
+}

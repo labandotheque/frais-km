@@ -12,7 +12,7 @@ import { defineConfig } from 'vite'
 // Si tu déploies plutôt sur un "user/org page" (<user>.github.io racine) ou
 // sur un autre hébergeur à la racine, mets simplement base: '/'.
 export default defineConfig({
-  base: process.env.VITE_BASE_PATH,
+  base: process.env.VITE_BASE_PATH || '/',
   plugins: [vue(), tailwindcss()],
   resolve: {
     alias: {

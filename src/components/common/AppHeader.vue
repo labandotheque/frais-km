@@ -17,7 +17,7 @@
       <div class="mt-1 flex items-center gap-x-2 text-xs text-slate-500 truncate">
         <span class="truncate hidden md:inline">Pour les intermittents du spectacle</span>
         <span class="hidden md:inline text-slate-300">•</span>
-        <span class="">Proposé par <span class="font-medium text-slate-600">La Bandothèque</span></span>
+        <span class="">Proposé par <a href="https://labandotheque.fr" target="_blank" class="font-medium text-slate-600">La Bandothèque</a></span>
       </div>
     </div>
 
