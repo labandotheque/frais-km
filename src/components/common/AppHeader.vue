@@ -9,15 +9,17 @@
           Calculateur de frais kilométriques
         </h1>
 
-        <span class="hidden xs:inline-flex items-center h-5 px-1.5 sm:px-2 rounded-md bg-slate-50 border border-slate-200 text-[10px] sm:text-[11px] font-medium text-slate-600 shrink-0">
+        <span class="inline-flex items-center h-5 px-1.5 sm:px-2 rounded-md bg-slate-50 border border-slate-200 text-[10px] sm:text-[11px] font-medium text-slate-600 shrink-0">
           Libre &amp; gratuit
         </span>
       </div>
 
       <div class="mt-1 flex items-center gap-x-2 text-xs text-slate-500 truncate">
-        <span class="truncate hidden md:inline">Pour les intermittents du spectacle</span>
-        <span class="hidden md:inline text-slate-300">•</span>
-        <span class="">Proposé par <a href="https://labandotheque.fr" target="_blank" class="font-medium text-slate-600">La Bandothèque</a></span>
+        
+        
+        <span class="truncate hidden md:inline">A destination des musicien⋅nes</span>
+        <span class="hidden sm:inline text-slate-300">•</span>
+        <span class="">par <a href="https://labandotheque.fr" target="_blank" class="font-medium text-slate-600">La Bandothèque</a></span>
       </div>
     </div>
 
