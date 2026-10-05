@@ -22,26 +22,28 @@
              :key="p.id"
              class="bg-white border border-slate-200 rounded-lg p-2.5 flex items-center gap-2">
 
-            <span class="w-2.5 h-2.5 rounded-full shrink-0"
-                  :style="{ backgroundColor: getParticipantColor(p.id) }"></span>
-
             <input type="text"
                    v-model="p.name"
                    placeholder="Nom"
                    class="w-24 px-2 py-1.5 rounded-md border border-slate-200 text-xs font-semibold focus:border-indigo-400 focus:outline-none">
 
             <div class="relative flex-1">
+                <span class="absolute left-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full text-white font-semibold flex items-center justify-center text-[9px] z-10 pointer-events-none transition-opacity"
+                      :class="isValidated(p) ? 'opacity-100' : 'opacity-60'"
+                      :style="{ backgroundColor: getParticipantColor(p.id) }">{{ initials(p.name) }}</span>
+
                 <input type="text"
-                       v-model="p.query"
-                       @input="searchParticipant(idx)"
+                       :value="p.query"
+                       @input="onParticipantInput(p, idx, $event)"
                        @keydown.down.prevent="navigateParticipant(idx, 1)"
                        @keydown.up.prevent="navigateParticipant(idx, -1)"
                        @keydown.enter.prevent="handleParticipantEnter(idx)"
                        @keydown.esc="handleFieldEscape(p)"
-                       @blur="handleFieldBlur(p)"
+                       @blur="handleParticipantBlur(idx)"
                        placeholder="Adresse du domicile"
-                       autocomplete="off"
-                       class="w-full px-2.5 py-1.5 rounded-md border border-slate-200 text-xs focus:border-indigo-400 focus:outline-none">
+                       autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"
+                       class="w-full pl-9 pr-2.5 py-1.5 rounded-md bg-white border text-xs focus:outline-none focus:border-indigo-400 transition"
+                       :class="isValidated(p) ? 'border-indigo-300' : 'border-slate-200'">
 
                 <ul v-if="p.suggestions.length > 0"
                     class="absolute z-50 left-0 right-0 bg-white border border-slate-200 rounded-lg mt-1 shadow-lg max-h-56 overflow-y-auto">
@@ -83,5 +85,31 @@
 import { inject } from 'vue'
 
 const calculator = inject('calculator') as any
-const { participants, meetingPoints, draggedIndex, onDragStart, onDragOver, onDrop, onDragEnd, removeParticipant, getParticipantColor, getParticipantColorByName } = calculator
+const { 
+    participants, 
+    addParticipant, 
+    removeParticipant, 
+    getParticipantColor, 
+    searchParticipant, 
+    selectParticipant, 
+    handleParticipantEnter, 
+    navigateParticipant, 
+    handleParticipantBlur, 
+    handleFieldEscape,
+    formatAddress, 
+    formatAddressMain, 
+    formatAddressSecondary, 
+    addressTypeIcon 
+} = calculator
+
+const isValidated = (p: any) => !!p.coords && !p.edited
+
+// Mêmes initiales que sur le marqueur de la carte
+const initials = (name: string) => (name || '').trim().substring(0, 2).toUpperCase() || '?'
+
+// :value + @input (pas v-model) : v-model ignore les événements pendant la composition du clavier mobile
+function onParticipantInput(p: any, idx: number, e: Event) {
+    p.query = (e.target as HTMLInputElement).value
+    searchParticipant(idx)
+}
 </script>

@@ -21,7 +21,6 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
     const inputMode = ref(initialMode || 'cities')
     const notification = ref({ show: false, message: '' })
     const selectedParticipantToAdd = ref({})
-    const draggedIndex = ref(null)
     const showFuelModal = ref(false)
     const selectedFuelType = ref(readInitialValue('selectedFuelType', 'gazole'))
 
@@ -30,13 +29,12 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
         setTimeout(() => { notification.value.show = false }, 5000)
     }
 
+    let nextWaypointId = 1
+    const createWaypoint = (w = {}) => ({
+        id: nextWaypointId++, query: w.query || '', suggestions: [], coords: w.coords || null, selectedIndex: -1
+    })
     const savedWaypoints = readInitialValue('waypoints', null)
-    const waypoints = ref(savedWaypoints ? savedWaypoints.map(w => ({
-        query: w.query || '', suggestions: [], coords: w.coords || null, isSelecting: false, selectedIndex: -1
-    })) : [
-        { query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1 },
-        { query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1 }
-    ])
+    const waypoints = ref(savedWaypoints ? savedWaypoints.map(createWaypoint) : [createWaypoint(), createWaypoint()])
 
     const manualKm = ref(Number(readInitialValue('manualKm', 0)) || 0)
     const isRoundTrip = ref(readInitialValue('isRoundTrip', false) === true || readInitialValue('isRoundTrip', false) === 'true')
@@ -157,25 +155,13 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
         handleCalculate, debouncedRunVisualCarpool
     })
 
-    const onDragStart = (index, event) => {
-        draggedIndex.value = index
-        event.dataTransfer.effectAllowed = 'move'
-    }
-    const onDragOver = (index, event) => {
-        event.preventDefault()
-        event.dataTransfer.dropEffect = 'move'
-    }
-    const onDrop = (index) => {
-        if (draggedIndex.value === null || draggedIndex.value === index) return
-        const movedItem = waypoints.value.splice(draggedIndex.value, 1)[0]
-        waypoints.value.splice(index, 0, movedItem)
-        draggedIndex.value = null
+    const reverseWaypoints = () => {
+        waypoints.value = [...waypoints.value].reverse()
         handleCalculate()
     }
-    const onDragEnd = () => { draggedIndex.value = null }
 
     const addWaypoint = () => {
-        const newWp = { query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1 }
+        const newWp = createWaypoint()
         if (waypoints.value.length >= 1) waypoints.value.splice(waypoints.value.length - 1, 0, newWp)
         else waypoints.value.push(newWp)
         if (inputMode.value === 'cities') handleCalculate()
@@ -262,10 +248,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
         if (confirm("Voulez-vous effacer toutes les données enregistrées ?")) {
             persistence.setResetInProgress(true)
             persistence.removeAll()
-            waypoints.value = [
-                { query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1 },
-                { query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1 }
-            ]
+            waypoints.value = [createWaypoint(), createWaypoint()]
             manualKm.value = 0
             isRoundTrip.value = false
             globalToll.value = 0
@@ -313,12 +296,11 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
 
     return {
         inputMode, notification, waypoints, manualKm, isRoundTrip, globalToll, carpoolDestination, participants, meetingPoints,
-        visualCarpoolResults, calcMode, fuelPrice, fuelConsumption, baremeRate, loading, error, selectedParticipantToAdd, draggedIndex,
+        visualCarpoolResults, calcMode, fuelPrice, fuelConsumption, baremeRate, loading, error, selectedParticipantToAdd,
         showFuelModal, ...fuelApi, selectedFuelType, debouncedRunVisualCarpool,
         formatAddress, formatAddressMain, formatAddressSecondary, addressTypeIcon,
-        addWaypoint, removeWaypoint, ...carpoolApi,
+        addWaypoint, removeWaypoint, reverseWaypoints, handleCalculate, ...carpoolApi,
         ...addressApi,
-        onDragStart, onDragOver, onDrop, onDragEnd,
         resetData, shareTrip,
         totalDistanceKm, totalDistanceAmount, finalAmount, totalVisualCarpoolAmount
     }

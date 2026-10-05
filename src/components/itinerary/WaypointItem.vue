@@ -1,29 +1,23 @@
 <template>
-<div v-for="(wp, index) in waypoints"
-     :key="index"
-     draggable="true"
-     @dragstart="onDragStart(index, $event)"
-     @dragover.prevent="onDragOver(index, $event)"
-     @drop="onDrop(index)"
-     @dragend="onDragEnd"
-     class="relative flex items-center gap-2 transition-all"
-     :class="{'opacity-40': draggedIndex === index}">
+<div class="relative flex items-center gap-2">
 
-    <span class="absolute left-3 w-5 h-5 rounded-full bg-indigo-600 text-white font-semibold flex items-center justify-center text-[9px] z-10 pointer-events-none">
+    <span class="absolute left-3 w-5 h-5 rounded-full text-white font-semibold flex items-center justify-center text-[9px] z-10 pointer-events-none transition-colors"
+          :class="validated ? 'bg-indigo-600' : 'bg-indigo-400'">
         {{ String.fromCharCode(65 + index) }}
     </span>
 
     <input type="text"
-           v-model="wp.query"
-           @input="searchLocation(index)"
+           :value="wp.query"
+           @input="onInput"
            @keydown.down.prevent="navigateSuggestions(index, 1)"
            @keydown.up.prevent="navigateSuggestions(index, -1)"
            @keydown.enter.prevent="handleWaypointEnter(index)"
            @keydown.esc="handleFieldEscape(wp)"
-           @blur="handleFieldBlur(wp)"
+           @blur="handleWaypointBlur(index)"
            :placeholder="index === 0 ? 'Départ (ex: Paris)' : (index === waypoints.length - 1 ? 'Arrivée (ex: Lyon)' : 'Étape intermédiaire')"
-           autocomplete="off"
-           class="w-full pl-10 pr-20 py-2.5 rounded-lg border border-slate-200 bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 focus:outline-none text-sm transition">
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"
+           class="w-full pl-10 pr-20 py-2.5 rounded-lg bg-white border text-sm focus:outline-none focus:ring-2 focus:border-indigo-500 focus:ring-indigo-100 transition"
+           :class="validated ? 'border-indigo-300' : 'border-slate-200'">
 
     <ul v-if="wp.suggestions.length > 0"
         class="absolute z-50 left-0 right-0 bg-white border border-slate-200 rounded-lg mt-1 shadow-lg max-h-56 overflow-y-auto top-full">
@@ -47,7 +41,14 @@
     </ul>
 
     <div class="absolute right-2 flex items-center gap-1">
+        <!-- <svg class="w-3.5 h-3.5 text-emerald-500 transition duration-200"
+             :class="validated ? 'opacity-100 scale-100' : 'opacity-0 scale-50'"
+             fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Lieu validé" :aria-hidden="!validated">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+        </svg> -->
+
         <button v-if="waypoints.length > 2 && index > 0 && index < waypoints.length - 1"
+                type="button"
                 @click="removeWaypoint(index)"
                 class="text-slate-300 hover:text-red-500 p-1 transition"
                 title="Supprimer l'étape">
@@ -57,7 +58,7 @@
             </svg>
         </button>
 
-        <div class="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 p-1"
+        <div class="drag-handle cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 p-1 touch-none"
              title="Glisser pour réorganiser">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -70,8 +71,23 @@
 </template>
 
 <script setup lang="ts">
-import { inject } from 'vue'
+import { inject, computed } from 'vue'
 
+const props = defineProps<{ index: number }>()
 const calculator = inject('calculator') as any
-const { waypoints, searchLocation, selectLocation, handleWaypointEnter, navigateSuggestions, removeWaypoint, handleFieldBlur, handleFieldEscape } = calculator
+const {
+    waypoints, searchLocation, selectLocation, handleWaypointEnter, handleWaypointBlur,
+    navigateSuggestions, removeWaypoint, handleFieldEscape,
+    formatAddressMain, formatAddressSecondary, addressTypeIcon
+} = calculator
+
+const wp = computed(() => waypoints.value[props.index])
+const validated = computed(() => !!wp.value.coords)
+
+// :value + @input (et pas v-model) : v-model ignore les événements pendant la composition
+// du clavier mobile, ce qui retardait l'autocomplete jusqu'à l'espace.
+function onInput(e: Event) {
+    wp.value.query = (e.target as HTMLInputElement).value
+    searchLocation(props.index)
+}
 </script>

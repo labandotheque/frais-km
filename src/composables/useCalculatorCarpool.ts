@@ -192,7 +192,7 @@ export function useCalculatorCarpool({
     const runVisualCarpool = async () => {
         const myToken = ++carpoolToken
         error.value = ''
-        if (!carpoolDestination.value.coords && carpoolDestination.value.query.trim().length >= 2) {
+        if (!carpoolDestination.value.coords && !carpoolDestination.value.edited && carpoolDestination.value.query.trim().length >= 2) {
             const dataDest = await safeFetchJson(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(carpoolDestination.value.query)}&limit=1`)
             if (dataDest?.features?.length > 0) {
                 carpoolDestination.value.coords = { lat: dataDest.features[0].geometry.coordinates[1], lon: dataDest.features[0].geometry.coordinates[0] }
@@ -200,7 +200,7 @@ export function useCalculatorCarpool({
             }
         }
         if (!carpoolDestination.value.coords) return
-        await Promise.all(participants.value.filter(p => !p.coords && p.query.trim().length >= 2).map(async (p) => {
+        await Promise.all(participants.value.filter(p => !p.coords && !p.edited && p.query.trim().length >= 2).map(async (p) => {
             const dataP = await safeFetchJson(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(p.query)}&limit=1`)
             if (dataP?.features?.length > 0) {
                 p.coords = { lat: dataP.features[0].geometry.coordinates[1], lon: dataP.features[0].geometry.coordinates[0] }
