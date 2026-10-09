@@ -9,6 +9,7 @@ import { useCalculatorMap } from './useCalculatorMap'
 import { useCalculatorFuel } from './useCalculatorFuel'
 import { useCalculatorCarpool } from './useCalculatorCarpool'
 import { safeFetchJson } from '../services/api'
+import { osrmJson } from '../utils/osrm'
 
 export function useCalculator(initialMode = null, sharedState = null, initialCalculationMode = null) {
     const { safeGetLocalStorage } = useLocalStorage()
@@ -87,10 +88,10 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
     let recalcTimer = null
     let runVisualCarpool = () => {}
 
-    const debouncedRunVisualCarpool = (immediate = false) => {
+    const debouncedRunVisualCarpool = (immediate = false, fitMap = true) => {
         clearTimeout(recalcTimer)
-        if (immediate) { runVisualCarpool(); return }
-        recalcTimer = setTimeout(() => runVisualCarpool(), 400)
+        if (immediate) { runVisualCarpool(fitMap); return }
+        recalcTimer = setTimeout(() => runVisualCarpool(fitMap), 400)
     }
 
     const fuelApi = useCalculatorFuel({
@@ -131,7 +132,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
         try {
             mapApi.updateMarkers(waypoints.value.map((w, i) => ({ coords: w.coords, label: String.fromCharCode(65 + i), color: '#4f46e5' })))
             const coordsList = waypoints.value.map(w => `${w.coords.lon},${w.coords.lat}`)
-            const data = await safeFetchJson(`https://router.project-osrm.org/route/v1/driving/${coordsList.join(';')}?overview=full&geometries=geojson`)
+            const data = await osrmJson(`https://router.project-osrm.org/route/v1/driving/${coordsList.join(';')}?overview=full&geometries=geojson`, safeFetchJson)
             if (myToken !== calcToken) return
             if (!data || !data.routes) throw new Error("Erreur de calcul d'itinéraire")
             oneWayKm.value = Math.round((data.routes[0].distance / 1000) * 10) / 10

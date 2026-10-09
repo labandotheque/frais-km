@@ -1,7 +1,7 @@
 <template>
 <div class="relative z-10 rounded-lg border border-slate-200 overflow-visible">
 
-    <div class="px-3.5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+    <div class="px-3.5 py-3  flex items-center justify-between">
         <div>
             <span class="block text-[10px] font-semibold text-slate-600 uppercase tracking-wide">
                 Participants
@@ -20,7 +20,7 @@
     <div class="p-2.5 space-y-2">
         <div v-for="(p, idx) in participants"
              :key="p.id"
-             class="bg-white border border-slate-200 rounded-lg p-2.5 flex items-center gap-2">
+             class="bg-white rounded-lg flex items-center gap-2">
 
             <input type="text"
                    v-model="p.name"

@@ -2,7 +2,7 @@
 <div v-if="inputMode === 'carpool'" class="space-y-4">
 
     <!-- Destination -->
-    <div class="relative z-20 bg-slate-50 rounded-lg border border-slate-200 p-3.5">
+    <div class="relative z-20 ">
         <div class="flex items-center justify-between mb-1.5">
             <label class="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">
                 Destination

@@ -1,7 +1,10 @@
 // @ts-nocheck
+import { ref } from 'vue'
 import { safeFetchJson } from '../services/api'
 import { formatAddress } from '../utils/formatting'
-import { getDistanceKm } from '../utils/distance'
+import { suggestMeetingPoints } from '../services/carpool'
+import { cfgsFromMeetingPoints, writeCfgsToMeetingPoints, simulateScenario, repairScenario, applyRole, roleAvailability } from '../utils/carpool-scenario'
+import { osrmJson } from '../utils/osrm'
 
 export function useCalculatorCarpool({
     inputMode, carpoolDestination, participants, meetingPoints, visualCarpoolResults,
@@ -10,6 +13,10 @@ export function useCalculatorCarpool({
     showNotification, debouncedRunVisualCarpoolRef, createParticipantId
 }) {
     let carpoolToken = 0
+    const suggestionSummary = ref(null)      // résumé du dernier plan proposé (affiché par MeetingPoints.vue)
+    const isDraggingMarker = ref(false)      // flag pour éviter le refit quand on drags un marqueur
+    // Tous les appels à l'OSRM public passent par la file partagée (≤ 1 requête/s, cache, dédoublonnage)
+    const osrm = (url) => osrmJson(url, safeFetchJson)
 
     const participantColors = ['#4f46e5', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4']
     const getParticipantColor = (id) => participantColors[id % participantColors.length]
@@ -17,6 +24,25 @@ export function useCalculatorCarpool({
         const p = participants.value.find(pp => pp.name === pName)
         return p ? getParticipantColor(p.id) : participantColors[0]
     }
+
+    // ───────── Règles physiques du scénario (voir utils/carpoolScenario.ts)
+    // `selectedDriver` = propriétaire de la voiture qui repart de l'arrêt (« voiture de X »), pas forcément qui conduit.
+    const scenarioNames = () => participants.value.map(p => p.name)
+    const readCfgs = () => cfgsFromMeetingPoints(meetingPoints.value)
+    const simulateAll = () => simulateScenario(scenarioNames(), readCfgs())
+    const roleOptions = (mIdx, pName) => roleAvailability(scenarioNames(), readCfgs(), mIdx, pName)
+    const changeRole = (mIdx, pName, role) => {                 // role : 'car' | 'passenger' | 'none'
+        const res = applyRole(scenarioNames(), readCfgs(), mIdx, pName, role)
+        writeCfgsToMeetingPoints(meetingPoints.value, res.cfgs)
+        debouncedRunVisualCarpoolRef(true)
+        return res.adjustments
+    }
+    const fixScenario = () => {                                 // retire/complète ce qui est devenu impossible
+        const res = repairScenario(scenarioNames(), readCfgs())
+        if (res.adjustments.length) { writeCfgsToMeetingPoints(meetingPoints.value, res.cfgs); debouncedRunVisualCarpoolRef(true) }
+        return res.adjustments
+    }
+    const notifyAdjustments = (adj) => { if (adj.length) showNotification(adj.join(' ')) }
 
     const getParticipantsAtMp = (mIdx) => {
         const mp = meetingPoints.value[mIdx]
@@ -56,33 +82,15 @@ export function useCalculatorCarpool({
     const addParticipantToMp = (mIdx) => {
         const pName = selectedParticipantToAdd.value[mIdx]
         if (!pName) return
-        const mp = meetingPoints.value[mIdx]
-        if (!mp.participations) mp.participations = {}
-        mp.participations[pName] = 'yes'
-        if (mp.selectedDriver === pName) mp.selectedDriver = null
         selectedParticipantToAdd.value[mIdx] = null
-        debouncedRunVisualCarpoolRef(true)
+        notifyAdjustments(changeRole(mIdx, pName, 'passenger'))
     }
 
-    const removeParticipantFromMp = (mIdx, pName) => {
-        const mp = meetingPoints.value[mIdx]
-        if (mp.participations) delete mp.participations[pName]
-        if (mp.selectedDriver === pName) mp.selectedDriver = null
-        debouncedRunVisualCarpoolRef(true)
-    }
+    const removeParticipantFromMp = (mIdx, pName) => notifyAdjustments(changeRole(mIdx, pName, 'none'))
 
     const setDriver = (mIdx, pName) => {
         if (!pName) return
-        if (isParticipantPassengerAtMp(pName, mIdx)) {
-            showNotification(`${pName} est déjà passager à cet arrêt. Retirez-le des passagers de cet arrêt avant de le désigner conducteur.`)
-            return
-        }
-        const mp = meetingPoints.value[mIdx]
-        if (!mp.participations) mp.participations = {}
-        mp.selectedDriver = pName
-        mp.participations[pName] = 'yes'
-        getPassengersFromPreviousSteps(mIdx).forEach(passName => { mp.participations[passName] = 'yes' })
-        debouncedRunVisualCarpoolRef(true)
+        notifyAdjustments(changeRole(mIdx, pName, 'car'))
     }
 
     const addParticipant = () => {
@@ -103,6 +111,7 @@ export function useCalculatorCarpool({
             if (mp.participations) delete mp.participations[removedName]
             if (mp.selectedDriver === removedName) mp.selectedDriver = null
         })
+        notifyAdjustments(fixScenario())
         debouncedRunVisualCarpoolRef(true)
     }
 
@@ -115,6 +124,7 @@ export function useCalculatorCarpool({
 
     const removeMeetingPoint = (idx) => {
         meetingPoints.value.splice(idx, 1)
+        notifyAdjustments(fixScenario())
         debouncedRunVisualCarpoolRef(true)
     }
 
@@ -135,57 +145,59 @@ export function useCalculatorCarpool({
             showNotification("Il faut au moins 2 participants avec domiciles.")
             return
         }
-        meetingPoints.value = []
-        visualCarpoolResults.value = []
-        const dest = carpoolDestination.value.coords
-        const sortedParts = [...activeParts].map(p => ({ participant: p, dist: getDistanceKm(p.coords.lat, p.coords.lon, dest.lat, dest.lon) }))
-            .sort((a, b) => (b.dist - a.dist) || (a.participant.id - b.participant.id))
-        const driverCandidate = sortedParts[0].participant
-        const dataRouteDriver = await safeFetchJson(`https://router.project-osrm.org/route/v1/driving/${driverCandidate.coords.lon},${driverCandidate.coords.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson`)
-        if (!dataRouteDriver || !dataRouteDriver.routes) {
-            showNotification("Impossible de calculer l'itinéraire du conducteur principal.")
+        if (activeParts.length > 12) {
+            showNotification("La suggestion automatique est limitée à 12 participants.")
             return
         }
-        let pickups = []
+
+        showNotification("Recherche des meilleurs points de rendez-vous…")
+        loading.value = true
+        let res
         try {
-            const lineDriver = turf.lineString(dataRouteDriver.routes[0].geometry.coordinates)
-            const routeLengthKm = turf.length(lineDriver, { units: 'kilometers' })
-            for (const { participant: cand } of sortedParts.slice(1)) {
-                const ptCand = turf.point([cand.coords.lon, cand.coords.lat])
-                const nearest = turf.nearestPointOnLine(lineDriver, ptCand, { units: 'kilometers' })
-                if (!nearest?.geometry?.coordinates) continue
-                const [lon, lat] = nearest.geometry.coordinates
-                const locationAlongRoute = nearest.properties.location || 0
-                const distFromDest = getDistanceKm(lat, lon, dest.lat, dest.lon)
-                if (distFromDest > routeLengthKm * 0.1 && locationAlongRoute > routeLengthKm * 0.05) pickups.push({ participant: cand, coords: { lat, lon }, locationAlongRoute })
-            }
+            res = await suggestMeetingPoints({
+                participants: activeParts.map(p => ({ name: p.name, coords: p.coords, label: p.query })),
+                dest: carpoolDestination.value.coords,
+                deps: { getJson: safeFetchJson }
+            })
         } catch (e) {
-            console.error("Erreur Turf.js projection amont:", e)
+            console.error('Suggestion de points de rendez-vous :', e)
+            showNotification("Erreur pendant la recherche de points de rendez-vous.")
+            return
+        } finally {
+            loading.value = false
         }
-        if (pickups.length === 0) {
-            showNotification("Aucun point de covoiturage optimal trouvé : vos trajets ne se croisent pas assez.")
+        if (!res.ok) {
+            showNotification(res.message)          // on ne touche pas aux arrêts existants en cas d'échec
             return
         }
-        pickups.sort((a, b) => (a.locationAlongRoute - b.locationAlongRoute) || (a.participant.id - b.participant.id))
-        const MERGE_RADIUS_KM = 3
-        let stops = []
-        for (const pk of pickups) {
-            const existing = stops.find(s => getDistanceKm(s.coords.lat, s.coords.lon, pk.coords.lat, pk.coords.lon) < MERGE_RADIUS_KM)
-            if (existing) {
-                existing.participants.push(pk.participant)
-                existing.participants.sort((a, b) => a.id - b.id)
-            } else stops.push({ coords: pk.coords, participants: [pk.participant] })
+
+        const name = (i) => activeParts[i].name
+        const newMps = []
+        for (const car of res.cars) {
+            const driverName = name(car.driver)
+            car.stops.forEach((stop, i) => {
+                const participations = { [driverName]: 'yes' }
+                stop.passengers.forEach(idx => { participations[name(idx)] = 'yes' })
+                newMps.push({
+                    query: stop.label, suggestions: [], coords: stop.coords, selectedIndex: -1, edited: false,
+                    participations, selectedDriver: driverName
+                })
+            })
         }
-        const labels = await Promise.all(stops.map(s => safeFetchJson(`https://api-adresse.data.gouv.fr/reverse/?lon=${s.coords.lon}&lat=${s.coords.lat}`)))
-        stops.forEach((stop, i) => {
-            const revData = labels[i]
-            const label = revData?.features?.length > 0 ? revData.features[0].properties.label : `${stop.coords.lat.toFixed(4)}, ${stop.coords.lon.toFixed(4)}`
-            const participations = { [driverCandidate.name]: 'yes' }
-            stop.participants.forEach(p => { participations[p.name] = 'yes' })
-            meetingPoints.value.push({ query: label, suggestions: [], coords: stop.coords, isSelecting: true, selectedIndex: -1, participations, selectedDriver: driverCandidate.name })
-        })
-        const stopsDesc = stops.map(s => s.participants.map(p => p.name).join(' et ')).join(', puis ')
-        showNotification(`RDV intelligent créé : ${driverCandidate.name} récupère ${stopsDesc} en chemin !`)
+        meetingPoints.value = newMps
+        const fixed = fixScenario()                             // garde-fou : le plan proposé doit être physiquement possible
+        if (fixed.length) console.warn('Plan suggéré corrigé :', fixed)
+        visualCarpoolResults.value = []
+        suggestionSummary.value = {
+            savingsKm: Math.round(res.summary.savingsKm),
+            savingsPct: Math.round(res.summary.savingsPct * 100),
+            approx: !!res.approx
+        }
+
+        const who = res.cars.map(c => `${name(c.driver)} conduit et récupère ${c.members.filter(m => m !== c.driver).map(name).join(', ')}`).join(' ; ')
+        const solo = res.solos.length ? ` · Seul(s) : ${res.solos.map(name).join(', ')}` : ''
+        const approx = res.approx ? ' (distances approchées : service de routage indisponible)' : ''
+        showNotification(`${who}. Économie : ${Math.round(res.summary.savingsKm)} km (${Math.round(res.summary.savingsPct * 100)} %)${solo}${approx}`)
         debouncedRunVisualCarpoolRef(true)
     }
 
@@ -220,11 +232,13 @@ export function useCalculatorCarpool({
                 if (!mp.coords) return
                 const icon = L.divIcon({ className: 'custom-marker', html: `<div style="background-color: #059669;" class="text-white font-bold w-6 h-6 rounded-full flex items-center justify-center text-[10px] shadow-md border-2 border-white">${i + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] })
                 const marker = L.marker([mp.coords.lat, mp.coords.lon], { icon, draggable: true }).addTo(mapState.map)
+                marker.on('dragstart', () => { isDraggingMarker.value = true })
                 marker.on('dragend', async (e) => {
                     const newLatLng = e.target.getLatLng()
                     mp.coords = { lat: newLatLng.lat, lon: newLatLng.lng }
                     const revData = await safeFetchJson(`https://api-adresse.data.gouv.fr/reverse/?lon=${newLatLng.lng}&lat=${newLatLng.lat}`)
                     mp.query = revData?.features?.length > 0 ? revData.features[0].properties.label : `${newLatLng.lat.toFixed(4)}, ${newLatLng.lng.toFixed(4)}`
+                    isDraggingMarker.value = false
                     debouncedRunVisualCarpoolRef(true)
                 })
                 mapState.markers.push(marker)
@@ -237,37 +251,36 @@ export function useCalculatorCarpool({
             let tracking = {}
             activeParts.forEach(p => { tracking[p.name] = { km: 0, steps: [`Trajet direct de ${p.query || 'Domicile'} à ${carpoolDestination.value.query || 'Destination'} (Solo)`], color: getParticipantColor(p.id), role: 'solo' } })
             let newRouteLayers = []
-            const mpsWithDriver = meetingPoints.value.filter(mp => mp.coords && mp.selectedDriver)
-            const driverNames = [...new Set(mpsWithDriver.map(mp => mp.selectedDriver))]
+            const sim = simulateAll()
+            const hasCoords = (k) => !!meetingPoints.value[k]?.coords
+            const driverNames = scenarioNames().filter(n => sim.cars[n].stops.some(hasCoords))
             for (const driverName of driverNames) {
                 const driverParticipant = participants.value.find(p => p.name === driverName && p.coords)
                 if (!driverParticipant) continue
-                const driverMps = meetingPoints.value.map((mp, index) => ({ mp, index })).filter(x => x.mp.coords && x.mp.selectedDriver === driverName)
+                const driverMps = sim.cars[driverName].stops.filter(hasCoords).map(k => ({ mp: meetingPoints.value[k], index: k }))
                 if (driverMps.length === 0) continue
-                const lastStopIndex = driverMps[driverMps.length - 1].index
-                const nextMpAfter = meetingPoints.value.slice(lastStopIndex + 1).find(mp => mp.coords)
+                // la voiture va jusqu'à l'arrêt où son propriétaire monte dans une autre voiture (elle y est laissée), sinon jusqu'à la destination
+                const parkedIdx = sim.cars[driverName].parkedAt
+                const nextMpAfter = parkedIdx !== null && hasCoords(parkedIdx) ? meetingPoints.value[parkedIdx] : null
                 const carDestination = nextMpAfter ? nextMpAfter.coords : carpoolDestination.value.coords
                 const chain = driverMps.map(x => x.mp)
-                const legs = [{ from: driverParticipant.coords, to: chain[0].coords }]
-                for (let i = 1; i < chain.length; i++) legs.push({ from: chain[i - 1].coords, to: chain[i].coords })
-                legs.push({ from: chain[chain.length - 1].coords, to: carDestination })
+                const waypoints = [driverParticipant.coords, ...chain.map(mp => mp.coords), carDestination]
+                const dataDriver = await osrm(`https://router.project-osrm.org/route/v1/driving/${waypoints.map(c => `${c.lon},${c.lat}`).join(';')}?overview=full&geometries=geojson`)
                 let driverTotalKm = 0
-                for (const leg of legs) {
-                    const dataLeg = await safeFetchJson(`https://router.project-osrm.org/route/v1/driving/${leg.from.lon},${leg.from.lat};${leg.to.lon},${leg.to.lat}?overview=full&geometries=geojson`)
-                    if (dataLeg?.routes) {
-                        driverTotalKm += dataLeg.routes[0].distance / 1000
-                        newRouteLayers.push(L.polyline(dataLeg.routes[0].geometry.coordinates.map(c => [c[1], c[0]]), { color: getParticipantColor(driverParticipant.id), weight: 5 }))
-                    }
+                if (dataDriver?.routes) {
+                    driverTotalKm = dataDriver.routes[0].distance / 1000
+                    newRouteLayers.push(L.polyline(dataDriver.routes[0].geometry.coordinates.map(c => [c[1], c[0]]), { color: getParticipantColor(driverParticipant.id), weight: 5 }))
                 }
                 tracking[driverName].km += driverTotalKm
                 tracking[driverName].role = 'driver'
                 let stepsText = chain.map((mp, i) => i === 0 ? `Départ ${driverParticipant.query} ➔ ${mp.query} (Conducteur)` : `Puis ${chain[i - 1].query} ➔ ${mp.query}`)
-                stepsText.push(!nextMpAfter ? `Puis ${chain[chain.length - 1].query} ➔ ${carpoolDestination.value.query}` : `Puis ${chain[chain.length - 1].query} ➔ ${nextMpAfter.query} (Relais / Point de RDV suivant)`)
+                stepsText.push(!nextMpAfter ? `Puis ${chain[chain.length - 1].query} ➔ ${carpoolDestination.value.query}` : `Puis ${chain[chain.length - 1].query} ➔ ${nextMpAfter.query} (voiture laissée ici)`)
                 tracking[driverName].steps = stepsText
-                for (const mp of chain) {
-                    const passengersHere = participants.value.filter(p => p.name !== driverName && mp.participations?.[p.name] === 'yes')
+                for (const { mp, index } of driverMps) {
+                    // seuls ceux qui arrivent avec leur propre voiture ont un trajet jusqu'à l'arrêt ; les autres changent de voiture sur place
+                    const passengersHere = participants.value.filter(p => p.coords && sim.stops[index].arriving.includes(p.name))
                     await Promise.all(passengersHere.map(async (p) => {
-                        const dataToMp = await safeFetchJson(`https://router.project-osrm.org/route/v1/driving/${p.coords.lon},${p.coords.lat};${mp.coords.lon},${mp.coords.lat}?overview=full&geometries=geojson`)
+                        const dataToMp = await osrm(`https://router.project-osrm.org/route/v1/driving/${p.coords.lon},${p.coords.lat};${mp.coords.lon},${mp.coords.lat}?overview=full&geometries=geojson`)
                         if (dataToMp?.routes) {
                             const kmToMp = dataToMp.routes[0].distance / 1000
                             newRouteLayers.push(L.polyline(dataToMp.routes[0].geometry.coordinates.map(c => [c[1], c[0]]), { color: getParticipantColor(p.id), weight: 3, dashArray: '4,4' }))
@@ -279,9 +292,9 @@ export function useCalculatorCarpool({
                 }
             }
             await Promise.all(activeParts.map(async (p) => {
-                const isInValidMp = meetingPoints.value.some(mp => mp.coords && mp.selectedDriver && mp.participations?.[p.name] === 'yes')
-                if (!isInValidMp) {
-                    const dataSolo = await safeFetchJson(`https://router.project-osrm.org/route/v1/driving/${p.coords.lon},${p.coords.lat};${carpoolDestination.value.coords.lon},${carpoolDestination.value.coords.lat}?overview=full&geometries=geojson`)
+                const involved = sim.cars[p.name].stops.some(hasCoords) || (sim.parkedAt[p.name] !== undefined && hasCoords(sim.parkedAt[p.name]))
+                if (!involved) {
+                    const dataSolo = await osrm(`https://router.project-osrm.org/route/v1/driving/${p.coords.lon},${p.coords.lat};${carpoolDestination.value.coords.lon},${carpoolDestination.value.coords.lat}?overview=full&geometries=geojson`)
                     let soloKm = 0
                     if (dataSolo?.routes) {
                         soloKm = dataSolo.routes[0].distance / 1000
@@ -309,7 +322,7 @@ export function useCalculatorCarpool({
         } catch (err) {
             if (myToken === carpoolToken) error.value = "Erreur lors du calcul du covoiturage."
         } finally {
-            if (myToken === carpoolToken) loading.value = false
+            loading.value = false
         }
     }
 
@@ -318,6 +331,7 @@ export function useCalculatorCarpool({
         getParticipantsAtMp, addParticipantToMp, removeParticipantFromMp, setDriver,
         getPassengersFromPreviousSteps, getPassengersBoardingHere,
         addParticipant, removeParticipant, addMeetingPoint, removeMeetingPoint,
-        autoDetectMeetingPoints, runVisualCarpool
+        autoDetectMeetingPoints, runVisualCarpool, suggestionSummary,
+        simulateAll, roleOptions, changeRole, fixScenario, isDraggingMarker
     }
 }

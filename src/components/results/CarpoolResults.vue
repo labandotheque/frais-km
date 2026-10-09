@@ -61,7 +61,41 @@
 
 
             <!-- Détail du calcul -->
-            <div class="bg-slate-900/50 p-2 rounded-md border border-slate-800/80 space-y-1">
+             
+<!-- Aperçu minimaliste du trajet -->
+<div v-if="res.steps?.length" class="px-1 py-2">
+
+    <div class="relative flex items-start">
+
+        <!-- Ligne de métro -->
+        <div
+            class="absolute left-2 right-2 top-[5px] h-0.5 opacity-50"
+            :style="{ backgroundColor: res.color }"
+        ></div>
+
+        <!-- Stations -->
+        <div
+            v-for="(step, sIdx) in res.steps"
+            :key="sIdx"
+            class="relative flex-1 min-w-0 flex flex-col items-center gap-1.5"
+        >
+            <span
+                class="relative z-10 w-2.5 h-2.5 rounded-full border-2 border-slate-800"
+                :style="{ backgroundColor: res.color }"
+            ></span>
+
+            <span
+                class="w-full text-center text-[9px] leading-tight text-slate-400 truncate"
+                :title="step"
+            >
+                {{ step }}
+            </span>
+        </div>
+
+    </div>
+
+</div>
+            <!-- <div class="bg-slate-900/50 p-2 rounded-md border border-slate-800/80 space-y-1">
 
                 <div v-for="(step, sIdx) in res.steps"
                      :key="sIdx"
@@ -76,6 +110,7 @@
                 </div>
 
             </div>
+             -->
 
 
             <!-- Infos participant -->
