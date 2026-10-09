@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useLocalStorage } from './useLocalStorage'
-import { formatAddress, formatAddressMain, formatAddressSecondary, addressTypeIcon } from '../utils/formatting'
+import { formatAddress, cityOf, formatAddressMain, formatAddressSecondary, addressTypeIcon } from '../utils/formatting'
 import { serializeCalculatorState } from '../utils/sharing'
 import { useCalculatorPersistence, STORAGE_PREFIX } from './useCalculatorPersistence'
 import { useCalculatorAddress } from './useCalculatorAddress'
@@ -74,6 +74,8 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
     })) : [])
 
     const visualCarpoolResults = ref(sharedState ? [] : safeGetLocalStorage(`${STORAGE_PREFIX}visualResults`, []))
+    const tripMode = ref(readInitialValue('tripMode', 'carpool') === 'solo' ? 'solo' : 'carpool')   // covoiturage ou tout le monde seul (les arrêts sont conservés)
+    const tripTotals = ref({ carpool: null, solo: null })                                              // total des deux modes, pour comparer
     const calcMode = ref(initialCalculationMode || readInitialValue('calcMode', 'bareme'))
     const fuelPrice = ref(defaultFuelPrice)
     const fuelConsumption = ref(defaultFuelConsumption)
@@ -102,7 +104,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
     const carpoolApi = useCalculatorCarpool({
         inputMode, carpoolDestination, participants, meetingPoints, visualCarpoolResults,
         selectedParticipantToAdd, isRoundTrip, calcMode, fuelConsumption, fuelPrice, baremeRate,
-        loading, error, mapState, clearMarkers: mapApi.clearMarkers, clearRoutes: mapApi.clearRoutes,
+        tripMode, tripTotals, loading, error, mapState, clearMarkers: mapApi.clearMarkers, clearRoutes: mapApi.clearRoutes,
         fitMapToMarkers: mapApi.fitMapToMarkers, showNotification,
         debouncedRunVisualCarpoolRef: debouncedRunVisualCarpool,
         createParticipantId: () => nextParticipantId++
@@ -182,6 +184,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
     persistence.watchField(participants, 'participants', { deep: true })
     persistence.watchField(meetingPoints, 'meetingPoints', { deep: true })
     persistence.watchField(visualCarpoolResults, 'visualCarpoolResults', { deep: true })
+    persistence.watchField(tripMode, 'tripMode')
     persistence.watchField(calcMode, 'calcMode')
     persistence.watchField(fuelPrice, 'fuelPrice')
     persistence.watchField(fuelConsumption, 'fuelConsumption')
@@ -197,6 +200,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
             }
         } else if (!newCoords) oldDestCoords = null
     })
+    watch(tripMode, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool(true, false) })
     watch(isRoundTrip, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool(true) })
     watch(carpoolDestination, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() }, { deep: true })
     watch(participants, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() }, { deep: true })
@@ -259,6 +263,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
                 { id: 2, name: 'Bob', query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1, consumption: 6.5, fuelPrice: 1.75, fuelType: 'gazole', toll: 0 }
             ]
             meetingPoints.value = []
+            tripMode.value = 'carpool'
             visualCarpoolResults.value = []
             selectedParticipantToAdd.value = {}
             calcMode.value = 'bareme'
@@ -299,6 +304,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
         inputMode, notification, waypoints, manualKm, isRoundTrip, globalToll, carpoolDestination, participants, meetingPoints,
         visualCarpoolResults, calcMode, fuelPrice, fuelConsumption, baremeRate, loading, error, selectedParticipantToAdd,
         showFuelModal, ...fuelApi, selectedFuelType, debouncedRunVisualCarpool,
+        tripMode, tripTotals, cityOf,
         formatAddress, formatAddressMain, formatAddressSecondary, addressTypeIcon,
         addWaypoint, removeWaypoint, reverseWaypoints, handleCalculate, ...carpoolApi,
         ...addressApi,

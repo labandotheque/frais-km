@@ -8,7 +8,7 @@
             <p class="text-xs text-slate-500">Qui monte où</p>
         </div>
 
-        <div class="flex items-center gap-2 shrink-0">
+        <div v-if="tripMode === 'carpool'" class="flex items-center gap-2 shrink-0">
             <button type="button" @click.stop="onSuggest"
                     :disabled="suggesting || !!suggestHint"
                     :title="suggestHint || 'Propose des points de rendez-vous'"
@@ -29,7 +29,23 @@
         </div>
     </div>
 
-    <div v-if="suggestionSummary && meetingPoints.length > 0"
+    <!-- Mode : covoiturage / solo (les arrêts sont conservés d'un mode à l'autre) -->
+    <div class="px-4 sm:px-5 pb-3">
+        <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl" role="tablist" aria-label="Mode de trajet">
+            <button v-for="t in modeTabs" :key="t.id" type="button" role="tab"
+                    :aria-selected="tripMode === t.id" @click.stop="setTripMode(t.id)"
+                    class="rounded-lg px-3 py-1.5 text-left transition"
+                    :class="tripMode === t.id ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'">
+                <span class="block text-xs font-semibold">{{ t.label }}</span>
+                <span class="block text-[11px] tabular-nums" :class="tripMode === t.id ? 'text-indigo-600 font-semibold' : 'text-slate-400'">{{ totalLabel(t.id) }}</span>
+            </button>
+        </div>
+        <p v-if="saving !== null" class="mt-1.5 text-[11px]" :class="saving > 0.005 ? 'text-emerald-700' : 'text-slate-400'">
+            {{ saving > 0.005 ? `Covoiturer économise ${saving.toFixed(2)} € au total` : 'Le covoiturage n\'économise rien sur ce trajet' }}
+        </p>
+    </div>
+
+    <div v-if="tripMode === 'carpool' && suggestionSummary && meetingPoints.length > 0"
          class="mx-4 sm:mx-5 mb-2 inline-flex items-center gap-1.5 text-[11px] text-slate-600 bg-emerald-50 border border-emerald-100 rounded-full pl-2.5 pr-1 py-0.5">
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
         Plan optimisé · <span class="font-semibold text-slate-800">−{{ suggestionSummary.savingsKm }} km</span> ({{ suggestionSummary.savingsPct }} %)
@@ -37,7 +53,7 @@
     </div>
 
     <!-- Scénario impossible (anciennes données, suppression d'une personne...) -->
-    <div v-if="sim.issues.length > 0" class="mx-4 sm:mx-5 mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-800">
+    <div v-if="tripMode === 'carpool' && sim.issues.length > 0" class="mx-4 sm:mx-5 mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-800">
         <p class="font-semibold">Ce scénario est impossible</p>
         <ul class="mt-1 space-y-0.5">
             <li v-for="(issue, i) in sim.issues" :key="i">Arrêt {{ issue.stop + 1 }} : {{ issue.message }}</li>
@@ -51,13 +67,24 @@
         <button type="button" @click.stop="notice = []" class="shrink-0 w-5 h-5 -my-0.5 rounded-full text-slate-400 hover:text-slate-700" aria-label="Fermer">✕</button>
     </div>
 
-    <p v-if="suggestHint && !suggesting && participants.length > 0"
+    <p v-if="tripMode === 'carpool' && suggestHint && !suggesting && participants.length > 0"
        class="mx-4 sm:mx-5 mb-2 text-[11px] text-amber-700">
         {{ suggestHint }}
     </p>
 
     <div v-if="participants.length === 0" class="px-5 pb-8 pt-4 text-center text-xs text-slate-500">
         Ajoutez des participants pour voir leurs trajets.
+    </div>
+
+    <!-- Mode solo : arrêts conservés, juste masqués -->
+    <div v-else-if="tripMode === 'solo'" class="px-4 sm:px-5 pb-6">
+        <div class="rounded-xl border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
+            Chacun roule de son côté.
+            <template v-if="meetingPoints.length > 0">
+                Vos {{ meetingPoints.length }} arrêt{{ meetingPoints.length > 1 ? 's' : '' }} sont conservés.
+                <button type="button" @click.stop="setTripMode('carpool')" class="font-semibold text-indigo-600 hover:text-indigo-800">Revenir au covoiturage</button>
+            </template>
+        </div>
     </div>
 
     <!-- ───────── Graphe ───────── -->
@@ -133,7 +160,10 @@
             <!-- Contenu -->
             <div class="flex-1 min-w-0 pb-6">
                 <div class="flex items-center gap-1.5">
-                    <div class="relative flex-1 min-w-0">
+                    <div class="relative flex-1 min-w-0 group">
+                        <span class="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center pointer-events-none"
+                              :class="row.driverIdx >= 0 ? 'text-white' : 'bg-white text-slate-400 border-2 border-dashed border-slate-300'"
+                              :style="row.driverIdx >= 0 ? { backgroundColor: color(participants[row.driverIdx]) } : {}">{{ row.r + 1 }}</span>
                         <input type="text"
                                :value="row.mp.query" :title="row.mp.query"
                                @input="onMeetingPointInput(row.mp, row.r, $event)"
@@ -144,8 +174,10 @@
                                @blur="handleMeetingPointBlur(row.r)"
                                placeholder="Adresse du rendez-vous"
                                autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"
-                               class="w-full h-10 px-3 rounded-xl border text-[13px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 transition"
+                               class="w-full h-10 pl-10 pr-28 rounded-xl border text-[13px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 transition"
                                :class="isValidated(row.mp) ? 'bg-white border-indigo-200' : 'bg-slate-50 border-slate-200'">
+                        <span v-if="row.city"
+                              class="absolute right-2 top-1/2 -translate-y-1/2 max-w-[38%] truncate rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 pointer-events-none group-focus-within:hidden">{{ row.city }}</span>
 
                         <ul v-if="row.mp.suggestions.length > 0"
                             class="absolute z-40 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto py-1">
@@ -258,7 +290,8 @@ const {
     searchMeetingPoint, selectMeetingPoint, handleMeetingPointEnter, handleMeetingPointBlur, navigateMeetingPoint,
     removeMeetingPoint, addMeetingPoint, autoDetectMeetingPoints,
     getParticipantColor, simulateAll, roleOptions, changeRole, fixScenario,
-    handleFieldEscape, formatAddressMain, formatAddressSecondary
+    handleFieldEscape, formatAddressMain, formatAddressSecondary,
+    tripMode, tripTotals, cityOf
 } = calculator
 
 // ───────── Géométrie du rail (en pixels : aucune déformation)
@@ -364,6 +397,7 @@ const rows = computed(() =>
         const issue = sim.value.issues.find((x: any) => x.stop === r)
         return {
             mp, r, key: stopKey(mp), driverIdx, people,
+            city: mp.query ? cityOf(mp.query) : '',
             invalid: issue ? issue.message : '',
             aboardCount: rec?.valid && rec.owner ? rec.occupantsAfter.length : people.filter((x: any) => x.role === 'car' || x.role === 'passenger' || x.role === 'aboard').length,
             nodeX: driverIdx >= 0 ? laneX(driverIdx) : railWidth.value / 2,
@@ -401,6 +435,18 @@ function setRole(r: number, p: any, role: 'car' | 'passenger' | 'none') {
 function onFix() {
     notice.value = fixScenario()
 }
+
+// ───────── Mode covoiturage / solo
+const modeTabs = [{ id: 'carpool', label: 'Covoiturage' }, { id: 'solo', label: 'Solo' }]
+const setTripMode = (mode: 'carpool' | 'solo') => { menu.value = null; tripMode.value = mode }
+const totalLabel = (mode: 'carpool' | 'solo') => {
+    const v = tripTotals.value?.[mode]
+    return v === null || v === undefined ? '…' : `${v.toFixed(2)} €`
+}
+const saving = computed<number | null>(() => {
+    const t = tripTotals.value
+    return t && t.carpool != null && t.solo != null ? t.solo - t.carpool : null
+})
 
 // ───────── Adresse, suppression, suggestion
 const isValidated = (mp: any) => !!mp.coords && !mp.edited

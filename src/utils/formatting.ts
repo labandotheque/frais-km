@@ -35,3 +35,12 @@ export const sortByScore = (features) => [...features].sort((a, b) => {
   const scoreB = (b.properties.score || 0) + (ADDRESS_TYPE_BOOST[b.properties.type] || 0)
   return scoreB - scoreA
 })
+
+
+export function cityOf(label = '') {
+    if (!label) return '—'
+    const zip = label.match(/\b\d{5}\s+([^,]+)/)            // « 12 rue X 29300 Quimperlé »
+    if (zip) return zip[1].trim()
+    const parts = label.split(/,|\s[–-]\s/).map(s => s.trim()).filter(Boolean)   // « Aire – adresse, Commune »
+    return parts[parts.length - 1] || label
+}

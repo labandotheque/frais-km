@@ -162,11 +162,22 @@ export function applyRole(names, cfgsIn, k, person, role) {
     const cfgs = cloneCfgs(cfgsIn)
     const cfg = cfgs[k]
     if (!cfg) return { cfgs, adjustments: [] }
+    const extra = []
     if (role === 'car') {
         const prev = cfg.driver
         cfg.driver = person
         cfg.boarding.delete(person)
-        if (prev && prev !== person) cfg.boarding.add(prev)             // l'ancienne voiture est laissée ici
+        if (prev && prev !== person) {
+            cfg.boarding.add(prev)                                      // l'ancienne voiture est laissée ici
+            // la voiture qui repart d'ici change : les arrêts suivants qui utilisaient l'ancienne suivent la nouvelle
+            for (let j = k + 1; j < cfgs.length; j++) {
+                const next = cfgs[j]
+                if (next.driver !== prev) continue
+                next.driver = person
+                next.boarding.delete(person)
+                extra.push(`Arrêt ${j + 1} : la voiture de ${person} remplace celle de ${prev}.`)
+            }
+        }
     } else if (role === 'passenger') {
         if (cfg.driver === person) cfg.driver = null
         cfg.boarding.add(person)
@@ -174,14 +185,14 @@ export function applyRole(names, cfgsIn, k, person, role) {
         const c = simulateScenario(names, cfgsIn).carOfBefore[k]?.[person]
         if (c && c !== person && c !== cfg.driver && !cfg.boarding.has(c)) {
             cfg.boarding.add(c)
-            const rep = repairScenario(names, cfgs)
-            return { cfgs: rep.cfgs, adjustments: [`Arrêt ${k + 1} : ${c} monte aussi (${person} est dans sa voiture).`, ...rep.adjustments] }
+            extra.push(`Arrêt ${k + 1} : ${c} monte aussi (${person} est dans sa voiture).`)
         }
     } else {
         if (cfg.driver === person) cfg.driver = null
         cfg.boarding.delete(person)
     }
-    return repairScenario(names, cfgs)
+    const rep = repairScenario(names, cfgs)
+    return { cfgs: rep.cfgs, adjustments: [...extra, ...rep.adjustments] }
 }
 
 /** Ce qu'on peut proposer à `person` à l'arrêt k : { car, passenger, none } -> { ok, reason?, note? } */
@@ -211,8 +222,9 @@ export function roleAvailability(names, cfgsIn, k, person) {
         const roleNow = O === person ? 'car' : (cfg.boarding.has(person) ? 'passenger' : 'none')
         if (roleNow === role) continue
         const res = applyRole(names, cfgsIn, k, person, role)
-        const notes = res.adjustments.filter(a => a.startsWith(`Arrêt ${k + 1}`) || true)
-        if (notes.length) out[key].note = notes.map(a => a.replace(/^Arrêt \d+ : /, '')).join(' ')
+        const own = `Arrêt ${k + 1} : `
+        const notes = res.adjustments.map(a => a.startsWith(own) ? a.slice(own.length) : a)
+        if (notes.length) out[key].note = notes.join(' ')
     }
     return out
 }

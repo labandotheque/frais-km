@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { ref } from 'vue'
 import { safeFetchJson } from '../services/api'
-import { formatAddress } from '../utils/formatting'
+import { formatAddress, cityOf } from '../utils/formatting'
 import { suggestMeetingPoints } from '../services/carpool'
 import { cfgsFromMeetingPoints, writeCfgsToMeetingPoints, simulateScenario, repairScenario, applyRole, roleAvailability } from '../utils/carpool-scenario'
 import { osrmJson } from '../utils/osrm'
@@ -201,7 +201,59 @@ export function useCalculatorCarpool({
         debouncedRunVisualCarpoolRef(true)
     }
 
-    const runVisualCarpool = async () => {
+    // ───────── Rendu carte / résultats (carpool)
+    const CAR_LANE_SPACING_PX = 14                                // écartement en pixels entre les voies des voitures
+    let lastFitKey = '', lastFitMap = null, ribbonOff = null
+
+    // trajet « metro » d'une personne : étapes + voiture utilisée sur chaque tronçon (JSON brut, la vue décide de l'affichage)
+    const buildJourney = (p, sim) => {
+        const nodes = [{ type: 'home', label: p.query, city: cityOf(p.query) }]
+        const segments = []
+        let car = p.name
+        meetingPoints.value.forEach((mp, k) => {
+            const rec = sim.stops[k]
+            if (!mp.coords || !rec?.valid || !rec.owner) return
+            if (!(rec.owner === p.name || rec.boarding.includes(p.name) || rec.aboardBefore.includes(p.name))) return
+            segments.push({ carOf: car })
+            nodes.push({ type: 'stop', index: k, label: mp.query, city: cityOf(mp.query) })
+            car = sim.carOfAfter[k][p.name]
+        })
+        segments.push({ carOf: car })
+        nodes.push({ type: 'dest', label: carpoolDestination.value.query, city: cityOf(carpoolDestination.value.query) })
+        return { nodes, segments }
+    }
+
+    const toLatLngs = (coords) => coords.map(c => [c[1], c[0]])
+
+    // décale une polyligne de `px` pixels (écran) perpendiculairement à sa direction
+    const offsetLatLngs = (map, latlngs, px) => {
+        if (!px) return latlngs
+        const pts = latlngs.map(ll => map.project(ll))
+        return pts.map((p, i) => {
+            const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]
+            const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1
+            return map.unproject(L.point(p.x - (dy / len) * px, p.y + (dx / len) * px))
+        })
+    }
+
+    const drawRibbons = (map, group, ribbons) => {
+        group.clearLayers()
+        for (const { latlngs, color, dash, laneOffset = 0 } of ribbons) {
+            const lane = offsetLatLngs(map, latlngs, laneOffset)
+            if (!dash) {
+                // Contour sombre sous le ruban de la voiture pour détacher les voies parallèles
+                group.addLayer(L.polyline(lane, {
+                    color: '#0f172a', weight: 7, opacity: 0.35, lineCap: 'round', lineJoin: 'round'
+                }))
+            }
+            group.addLayer(L.polyline(lane, {
+                color, weight: dash ? 3 : 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round',
+                ...(dash ? { dashArray: '5,6' } : {})
+            }))
+        }
+    }
+
+    const runVisualCarpool = async (fitMap = true) => {
         const myToken = ++carpoolToken
         error.value = ''
         if (!carpoolDestination.value.coords && !carpoolDestination.value.edited && carpoolDestination.value.query.trim().length >= 2) {
@@ -226,11 +278,42 @@ export function useCalculatorCarpool({
         try {
             let results = []
             clearMarkers()
-            const destIcon = L.divIcon({ className: 'custom-marker', html: '<div style="background-color: #dc2626;" class="text-white font-bold w-7 h-7 rounded-full flex items-center justify-center text-xs shadow-md border-2 border-white">🎯</div>', iconSize: [28, 28], iconAnchor: [14, 14] })
-            mapState.markers.push(L.marker([carpoolDestination.value.coords.lat, carpoolDestination.value.coords.lon], { icon: destIcon }).addTo(mapState.map))
+
+            // Initialisation de OverlappingMarkerSpiderfier (OMS) si non encore créé
+            const OMSClass = window.OverlappingMarkerSpiderfier || L.OverlappingMarkerSpiderfier
+            if (!mapState.oms && OMSClass) {
+                mapState.oms = new OMSClass(mapState.map, {
+                    keepSpiderfied: true,
+                    nearbyDistance: 25,
+                    circleFootSeparation: 30
+                })
+            }
+            if (mapState.oms) {
+                mapState.oms.clearMarkers()
+            }
+
+            // Destination
+            if (carpoolDestination.value.coords) {
+                const destIcon = L.divIcon({
+                    className: 'custom-marker',
+                    html: '<div style="background-color: #dc2626;" class="text-white font-bold w-7 h-7 rounded-full flex items-center justify-center text-xs shadow-md border-2 border-white">🎯</div>',
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                })
+                const destMarker = L.marker([carpoolDestination.value.coords.lat, carpoolDestination.value.coords.lon], { icon: destIcon }).addTo(mapState.map)
+                mapState.markers.push(destMarker)
+                if (mapState.oms) mapState.oms.addMarker(destMarker)
+            }
+
+            // Arrêts / Points de rendez-vous
             meetingPoints.value.forEach((mp, i) => {
                 if (!mp.coords) return
-                const icon = L.divIcon({ className: 'custom-marker', html: `<div style="background-color: #059669;" class="text-white font-bold w-6 h-6 rounded-full flex items-center justify-center text-[10px] shadow-md border-2 border-white">${i + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] })
+                const icon = L.divIcon({
+                    className: 'custom-marker',
+                    html: `<div style="background-color: #059669;" class="text-white font-bold w-6 h-6 rounded-full flex items-center justify-center text-[10px] shadow-md border-2 border-white">${i + 1}</div>`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12]
+                })
                 const marker = L.marker([mp.coords.lat, mp.coords.lon], { icon, draggable: true }).addTo(mapState.map)
                 marker.on('dragstart', () => { isDraggingMarker.value = true })
                 marker.on('dragend', async (e) => {
@@ -239,85 +322,135 @@ export function useCalculatorCarpool({
                     const revData = await safeFetchJson(`https://api-adresse.data.gouv.fr/reverse/?lon=${newLatLng.lng}&lat=${newLatLng.lat}`)
                     mp.query = revData?.features?.length > 0 ? revData.features[0].properties.label : `${newLatLng.lat.toFixed(4)}, ${newLatLng.lng.toFixed(4)}`
                     isDraggingMarker.value = false
-                    debouncedRunVisualCarpoolRef(true)
+                    debouncedRunVisualCarpoolRef(true, false)      // pas de recadrage après un déplacement d'arrêt
                 })
                 mapState.markers.push(marker)
+                if (mapState.oms) mapState.oms.addMarker(marker)
             })
+
+            // Participants
             activeParts.forEach(p => {
                 const bgColor = getParticipantColor(p.id)
-                mapState.markers.push(L.marker([p.coords.lat, p.coords.lon], { icon: L.divIcon({ className: 'custom-marker', html: `<div style="background-color: ${bgColor};" class="text-white font-bold w-6 h-6 rounded-full flex items-center justify-center text-[10px] shadow-md border-2 border-white">${p.name.substring(0, 2).toUpperCase()}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }) }).addTo(mapState.map))
+                const icon = L.divIcon({
+                    className: 'custom-marker',
+                    html: `<div style="background-color: ${bgColor};" class="text-white font-bold w-6 h-6 rounded-full flex items-center justify-center text-[10px] shadow-md border-2 border-white">${p.name.substring(0, 2).toUpperCase()}</div>`,
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12]
+                })
+                const marker = L.marker([p.coords.lat, p.coords.lon], { icon }).addTo(mapState.map)
+                mapState.markers.push(marker)
+                if (mapState.oms) mapState.oms.addMarker(marker)
             })
-            fitMapToMarkers()
-            let tracking = {}
-            activeParts.forEach(p => { tracking[p.name] = { km: 0, steps: [`Trajet direct de ${p.query || 'Domicile'} à ${carpoolDestination.value.query || 'Destination'} (Solo)`], color: getParticipantColor(p.id), role: 'solo' } })
-            let newRouteLayers = []
+
+            // recadrage uniquement si destination / domiciles / nombre d'arrêts ont changé, ou si la carte est neuve
+            const fitKey = JSON.stringify([
+                carpoolDestination.value.coords, activeParts.map(p => p.coords),
+                meetingPoints.value.filter(m => m.coords).length
+            ])
+            if ((fitMap && fitKey !== lastFitKey) || mapState.map !== lastFitMap) fitMapToMarkers()
+            lastFitKey = fitKey; lastFitMap = mapState.map
+
+            const km = {}                                           // nom -> km parcourus (aller simple)
+            const roles = Object.fromEntries(activeParts.map(p => [p.name, 'solo']))
+            const ribbons = []                                      // { latlngs, color, dash?, laneOffset? }
             const sim = simulateAll()
             const hasCoords = (k) => !!meetingPoints.value[k]?.coords
-            const driverNames = scenarioNames().filter(n => sim.cars[n].stops.some(hasCoords))
-            for (const driverName of driverNames) {
-                const driverParticipant = participants.value.find(p => p.name === driverName && p.coords)
-                if (!driverParticipant) continue
+            const route = (pts) => osrm(`https://router.project-osrm.org/route/v1/driving/${pts.map(c => `${c.lon},${c.lat}`).join(';')}?overview=full&geometries=geojson&steps=true`)
+            activeParts.forEach(p => { km[p.name] = 0 })
+
+            // Identification des voitures de covoiturage
+            const carpoolDrivers = scenarioNames().filter(n => sim.cars[n]?.stops?.some(hasCoords))
+
+            // Ne décaler que si au moins 2 voitures partagent le système de covoiturage
+            const getCarOffset = (driverName) => {
+                if (carpoolDrivers.length <= 1) return 0
+                const idx = carpoolDrivers.indexOf(driverName)
+                if (idx === -1) return 0
+                return (idx - (carpoolDrivers.length - 1) / 2) * CAR_LANE_SPACING_PX
+            }
+
+            for (const driverName of carpoolDrivers) {
+                const dp = participants.value.find(p => p.name === driverName && p.coords)
+                if (!dp) continue
                 const driverMps = sim.cars[driverName].stops.filter(hasCoords).map(k => ({ mp: meetingPoints.value[k], index: k }))
-                if (driverMps.length === 0) continue
-                // la voiture va jusqu'à l'arrêt où son propriétaire monte dans une autre voiture (elle y est laissée), sinon jusqu'à la destination
+                if (!driverMps.length) continue
+
+                // La voiture va jusqu'à l'arrêt où son propriétaire monte dans une autre voiture, sinon jusqu'à la destination
                 const parkedIdx = sim.cars[driverName].parkedAt
-                const nextMpAfter = parkedIdx !== null && hasCoords(parkedIdx) ? meetingPoints.value[parkedIdx] : null
-                const carDestination = nextMpAfter ? nextMpAfter.coords : carpoolDestination.value.coords
-                const chain = driverMps.map(x => x.mp)
-                const waypoints = [driverParticipant.coords, ...chain.map(mp => mp.coords), carDestination]
-                const dataDriver = await osrm(`https://router.project-osrm.org/route/v1/driving/${waypoints.map(c => `${c.lon},${c.lat}`).join(';')}?overview=full&geometries=geojson`)
-                let driverTotalKm = 0
-                if (dataDriver?.routes) {
-                    driverTotalKm = dataDriver.routes[0].distance / 1000
-                    newRouteLayers.push(L.polyline(dataDriver.routes[0].geometry.coordinates.map(c => [c[1], c[0]]), { color: getParticipantColor(driverParticipant.id), weight: 5 }))
+                const carDest = parkedIdx !== null && hasCoords(parkedIdx) ? meetingPoints.value[parkedIdx].coords : carpoolDestination.value.coords
+                const data = await route([dp.coords, ...driverMps.map(x => x.mp.coords), carDest])
+                const r = data?.routes?.[0]
+                if (r) {
+                    km[driverName] += r.distance / 1000
+                    ribbons.push({
+                        latlngs: toLatLngs(r.geometry.coordinates),
+                        color: getParticipantColorByName(driverName),
+                        laneOffset: getCarOffset(driverName)
+                    })
                 }
-                tracking[driverName].km += driverTotalKm
-                tracking[driverName].role = 'driver'
-                let stepsText = chain.map((mp, i) => i === 0 ? `Départ ${driverParticipant.query} ➔ ${mp.query} (Conducteur)` : `Puis ${chain[i - 1].query} ➔ ${mp.query}`)
-                stepsText.push(!nextMpAfter ? `Puis ${chain[chain.length - 1].query} ➔ ${carpoolDestination.value.query}` : `Puis ${chain[chain.length - 1].query} ➔ ${nextMpAfter.query} (voiture laissée ici)`)
-                tracking[driverName].steps = stepsText
+                roles[driverName] = 'driver'
+
+                // Trajets pointillés d'acheminement des passagers jusqu'à leur point de prise en charge (leur propre route)
                 for (const { mp, index } of driverMps) {
-                    // seuls ceux qui arrivent avec leur propre voiture ont un trajet jusqu'à l'arrêt ; les autres changent de voiture sur place
-                    const passengersHere = participants.value.filter(p => p.coords && sim.stops[index].arriving.includes(p.name))
-                    await Promise.all(passengersHere.map(async (p) => {
-                        const dataToMp = await osrm(`https://router.project-osrm.org/route/v1/driving/${p.coords.lon},${p.coords.lat};${mp.coords.lon},${mp.coords.lat}?overview=full&geometries=geojson`)
-                        if (dataToMp?.routes) {
-                            const kmToMp = dataToMp.routes[0].distance / 1000
-                            newRouteLayers.push(L.polyline(dataToMp.routes[0].geometry.coordinates.map(c => [c[1], c[0]]), { color: getParticipantColor(p.id), weight: 3, dashArray: '4,4' }))
-                            tracking[p.name].km += kmToMp
-                            tracking[p.name].role = 'passenger'
-                            tracking[p.name].steps = [`Départ ${p.query} ➔ ${mp.query} (Passager avec ${driverName})`]
-                        }
+                    const arriving = participants.value.filter(p => p.coords && sim.stops[index].arriving.includes(p.name))
+                    await Promise.all(arriving.map(async (p) => {
+                        const d = await route([p.coords, mp.coords])
+                        const rr = d?.routes?.[0]
+                        if (!rr) return
+                        km[p.name] += rr.distance / 1000
+                        roles[p.name] = 'passenger'
+                        ribbons.push({
+                            latlngs: toLatLngs(rr.geometry.coordinates),
+                            color: getParticipantColorByName(p.name),
+                            dash: true,
+                            laneOffset: 0                           // Sa propre route de raccordement
+                        })
                     }))
                 }
             }
+
+            // Trajets des participants se déplaçant seuls dans leur propre véhicule (sa propre route = pas de décalage)
             await Promise.all(activeParts.map(async (p) => {
-                const involved = sim.cars[p.name].stops.some(hasCoords) || (sim.parkedAt[p.name] !== undefined && hasCoords(sim.parkedAt[p.name]))
-                if (!involved) {
-                    const dataSolo = await osrm(`https://router.project-osrm.org/route/v1/driving/${p.coords.lon},${p.coords.lat};${carpoolDestination.value.coords.lon},${carpoolDestination.value.coords.lat}?overview=full&geometries=geojson`)
-                    let soloKm = 0
-                    if (dataSolo?.routes) {
-                        soloKm = dataSolo.routes[0].distance / 1000
-                        newRouteLayers.push(L.polyline(dataSolo.routes[0].geometry.coordinates.map(c => [c[1], c[0]]), { color: getParticipantColor(p.id), weight: 4 }))
-                    }
-                    tracking[p.name].km = soloKm
-                    tracking[p.name].role = 'solo'
-                    tracking[p.name].steps = [`Trajet direct de ${p.query || 'Domicile'} à ${carpoolDestination.value.query || 'Destination'} (Solo)`]
+                const involved = sim.cars[p.name]?.stops?.some(hasCoords) || (sim.parkedAt[p.name] !== undefined && hasCoords(sim.parkedAt[p.name]))
+                if (involved) return
+                const d = await route([p.coords, carpoolDestination.value.coords])
+                const rr = d?.routes?.[0]
+                km[p.name] = rr ? rr.distance / 1000 : 0
+                if (rr) {
+                    ribbons.push({
+                        latlngs: toLatLngs(rr.geometry.coordinates),
+                        color: getParticipantColorByName(p.name),
+                        laneOffset: 0                               // Sa propre route directe
+                    })
                 }
             }))
+
+            // résultats : données brutes uniquement, la vue décide de l'affichage
             for (const p of activeParts) {
-                const t = tracking[p.name]
-                const finalKm = Math.round((isRoundTrip.value ? t.km * 2 : t.km) * 10) / 10
-                const pConso = p.consumption !== undefined ? p.consumption : fuelConsumption.value
-                const pPrice = p.fuelPrice !== undefined ? p.fuelPrice : fuelPrice.value
-                const pToll = Number(p.toll || 0)
-                const fuelCost = calcMode.value === 'bareme' ? finalKm * baremeRate.value : (finalKm / 100) * pConso * pPrice
-                const totalAmount = fuelCost + pToll
-                results.push({ name: p.name, km: finalKm, liters: ((finalKm * pConso) / 100).toFixed(1), consoDisplay: `${pConso} L/100km`, amount: totalAmount, toll: pToll, steps: t.steps, color: t.color, role: t.role, fuelPrice: pPrice })
+                const finalKm = Math.round((isRoundTrip.value ? km[p.name] * 2 : km[p.name]) * 10) / 10
+                const consumption = p.consumption !== undefined ? p.consumption : fuelConsumption.value
+                const price = p.fuelPrice !== undefined ? p.fuelPrice : fuelPrice.value
+                const toll = Number(p.toll || 0)
+                const fuelCost = calcMode.value === 'bareme' ? finalKm * baremeRate.value : (finalKm / 100) * consumption * price
+                results.push({
+                    name: p.name, color: getParticipantColor(p.id), role: roles[p.name],
+                    km: finalKm, liters: (finalKm * consumption) / 100, consumption, fuelPrice: price,
+                    fuelCost, toll, amount: fuelCost + toll,
+                    journey: buildJourney(p, sim)
+                })
             }
             if (myToken !== carpoolToken) return
+
             clearRoutes()
-            newRouteLayers.forEach(l => { l.addTo(mapState.map); mapState.routeLayers.push(l) })
+            const map = mapState.map
+            const group = L.layerGroup()
+            drawRibbons(map, group, ribbons)
+            group.addTo(map); mapState.routeLayers.push(group)
+            ribbonOff?.()                                           // redessine les rubans au changement de zoom (largeur en pixels)
+            const redraw = () => drawRibbons(map, group, ribbons)
+            map.on('zoomend', redraw)
+            ribbonOff = () => map.off('zoomend', redraw)
+
             visualCarpoolResults.value = results
         } catch (err) {
             if (myToken === carpoolToken) error.value = "Erreur lors du calcul du covoiturage."
