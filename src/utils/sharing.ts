@@ -1,8 +1,7 @@
 // @ts-nocheck
 
 const commonKeys = [
-  'isRoundTrip',
-  'calcMode'
+  'isRoundTrip'
 ]
 
 const viewKeys = {
@@ -34,6 +33,10 @@ const getSharedKeys = (inputMode, calcMode) => [
 export function serializeCalculatorState(state, inputMode) {
   const params = new URLSearchParams()
   const keys = getSharedKeys(inputMode, state.calcMode)
+
+  if (state.calcMode === 'bareme' || state.calcMode === 'reels') {
+    params.set('mode', state.calcMode)
+  }
 
   keys.forEach((key) => {
     const value = state[key]
@@ -79,6 +82,12 @@ export function parseCalculatorState(search) {
 
     state[key] = rawValue
   })
+
+  const mode = params.get('mode')
+  if (mode === 'bareme' || mode === 'reels') {
+    state.calcMode = mode
+    hasState = true
+  }
 
   return hasState ? state : null
 }

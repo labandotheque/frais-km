@@ -284,7 +284,6 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
             meetingPoints: meetingPoints.value, calcMode: calcMode.value, fuelPrice: fuelPrice.value,
             fuelConsumption: fuelConsumption.value, baremeRate: baremeRate.value, selectedFuelType: selectedFuelType.value
         }, inputMode.value).toString()
-        url.searchParams.set('mode', calcMode.value)
         try {
             if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url.toString())
             else {

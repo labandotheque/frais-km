@@ -4,18 +4,21 @@
                step="0.01"
                :value="props.modelValue"
                @input="updatePrice"
-               :class="props.compact ? 'w-full px-2 pr-0 py-1.5' : 'w-full pl-3 pr-24 py-2'"
+               :class="props.compact ? 'w-full px-2 pr-12 py-1.5' : 'w-full pl-3 pr-28 py-2'"
                class="rounded-lg border border-slate-200 bg-white text-xs focus:border-indigo-400 focus:outline-none">
 
-        <div class="absolute right-1.5 top-1/2 -translate-y-1/2 -mt-[2px]">
+        <div class="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
             <button type="button"
                     @click="isOpen = !isOpen"
-                    class="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium text-indigo-600 transition hover:bg-indigo-100 hover:text-indigo-800 mt-1"
+                    class="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium text-indigo-600 transition hover:bg-indigo-100 hover:text-indigo-800 "
                     title="Récupérer le prix du carburant">
-                <span :class="props.compact ? 'inline lg:hidden' : ''">⛽</span><span :class="props.compact ? 'hidden lg:inline' : ''">Récupérer</span>
+                <span v-if="props.compact">⛽</span>
+                <span v-else>Récupérer</span>
             </button>
+            <span class="text-xs text-slate-400" aria-hidden="true">€</span>
+        </div>
 
-            <div v-if="isOpen"
+        <div v-if="isOpen"
                  class="absolute right-0 top-full z-[110] mt-1 w-44 rounded-lg border border-slate-200 bg-white p-2 text-xs shadow-lg">
                 <div class="flex items-center justify-between border-b border-slate-100 px-2 py-1 font-semibold text-slate-700">
                     <span>Type de carburant</span>
@@ -34,7 +37,6 @@
                     <span>{{ fuel.label }}</span>
                     <span v-if="props.fuelType === fuel.value" class="text-[10px] font-medium text-indigo-600">Actif</span>
                 </button>
-            </div>
         </div>
     </div>
 </template>

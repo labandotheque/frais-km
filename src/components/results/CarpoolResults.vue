@@ -139,9 +139,8 @@
 
 
     <!-- Total covoiturage -->
-    <div class="pt-3 flex justify-between items-end border-t border-slate-800">
-
-        <div>
+    <div class="pt-3 flex justify-between border-t border-slate-800">
+        <div class="">
 
             <span class="text-[9px] text-slate-500 uppercase tracking-wider block">
                 Total global remboursé
@@ -149,6 +148,10 @@
 
             <span class="text-2xl font-bold tracking-tight text-white">
                 {{ totalVisualCarpoolAmount.toFixed(2) }} €
+            </span>
+
+            <span class="block text-[10px] text-slate-400">
+                Total Km : {{ totalParticipantKm.toFixed(1) }} km
             </span>
 
         </div>
@@ -160,7 +163,7 @@
 </template>
 
 <script setup lang="ts">
-import { inject } from 'vue'
+import { computed, inject } from 'vue'
 
 const {
     visualCarpoolResults,
@@ -170,4 +173,8 @@ const {
     baremeRate,
     isRoundTrip
 } = inject('calculator') as any
+
+const totalParticipantKm = computed(() =>
+    visualCarpoolResults.value.reduce((total: number, participant: any) => total + Number(participant.km || 0), 0)
+)
 </script>

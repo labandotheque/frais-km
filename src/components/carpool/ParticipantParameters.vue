@@ -13,8 +13,8 @@
                     <th class="py-2 px-3">Participant</th>
                     <th class="py-2 px-3">Péage</th>
                     <template v-if="calcMode === 'reels'">
-                        <th class="py-2 px-3">Conso</th>
-                        <th class="py-2 px-3">Litre</th>
+                        <th class="py-2 px-3">Conso (L / 100)</th>
+                        <th class="py-2 px-3">Prix / L</th>
                     </template>
                 </tr>
             </thead>
@@ -38,11 +38,14 @@
 
                     <!-- Péage -->
                     <td class="py-2 px-3">
+                        <div class="relative">
                         <input type="number"
                                step="0.01"
                                v-model.number="p.toll"
-                               class="w-full px-2 py-1.5 rounded-lg border border-slate-200 text-xs bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 focus:outline-none transition"
+                               class="w-full pl-2 pr-6 py-1.5 rounded-lg border border-slate-200 text-xs bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 focus:outline-none transition"
                                placeholder="0">
+                            <span class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400" aria-hidden="true">€</span>
+                        </div>
                     </td>
 
                     <!-- Conso (si mode reels) -->
