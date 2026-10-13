@@ -1,13 +1,25 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import VillesEtapesView from './views/VillesEtapesView.vue'
 import KmDirectsView from './views/KmDirectsView.vue'
 import CovoiturageView from './views/CovoiturageView.vue'
 
-export const routes = [
-  { path: '/:calculationMode(bareme|reels)?', name: 'villes-etapes', component: VillesEtapesView },
-  { path: '/km/:calculationMode(bareme|reels)?', name: 'km', component: KmDirectsView },
-  { path: '/covoiturage/:calculationMode(bareme|reels)?', name: 'covoiturage', component: CovoiturageView }
+export const routes: RouteRecordRaw[] = [
+  { path: '/', name: 'villes-etapes', component: VillesEtapesView },
+  { path: '/km', name: 'km', component: KmDirectsView },
+  { path: '/covoiturage', name: 'covoiturage', component: CovoiturageView },
+  {
+    path: '/:calculationMode(bareme|reels)',
+    redirect: to => ({ name: 'villes-etapes', query: { ...to.query, mode: to.params.calculationMode, calculationMode: undefined } })
+  },
+  {
+    path: '/km/:calculationMode(bareme|reels)',
+    redirect: to => ({ name: 'km', query: { ...to.query, mode: to.params.calculationMode, calculationMode: undefined } })
+  },
+  {
+    path: '/covoiturage/:calculationMode(bareme|reels)',
+    redirect: to => ({ name: 'covoiturage', query: { ...to.query, mode: to.params.calculationMode, calculationMode: undefined } })
+  }
 ]
 
 const router = createRouter({

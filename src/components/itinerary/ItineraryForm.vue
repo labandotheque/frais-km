@@ -78,25 +78,25 @@
 
 <script setup lang="ts">
 import { inject } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import CarpoolForm from '../carpool/CarpoolForm.vue'
 import WaypointList from './WaypointList.vue'
 
 const calculator = inject('calculator') as any
 const router = useRouter()
+const route = useRoute()
 const { inputMode, calcMode } = calculator
 
 const goToMode = (mode: string) => {
     const routes: Record<string, string> = {
-        cities: '/',
-        km: '/km',
-        carpool: '/covoiturage'
+        cities: 'villes-etapes',
+        km: 'km',
+        carpool: 'covoiturage'
     }
-    const targetRoute = routes[mode] || '/'
-    const routeWithCalculationMode = targetRoute === '/'
-        ? `/${calcMode.value}`
-        : `${targetRoute}/${calcMode.value}`
-    router.push(calcMode.value ? routeWithCalculationMode : targetRoute)
+    router.push({
+        name: routes[mode] || 'villes-etapes',
+        query: { ...route.query, mode: calcMode.value, calculationMode: undefined }
+    })
 }
 
 const {

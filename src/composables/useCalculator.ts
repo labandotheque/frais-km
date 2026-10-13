@@ -11,7 +11,7 @@ import { useCalculatorCarpool } from './useCalculatorCarpool'
 import { safeFetchJson } from '../services/api'
 import { osrmJson } from '../utils/osrm'
 
-export function useCalculator(initialMode = null, sharedState = null, initialCalculationMode = null) {
+export function useCalculator(initialMode: string | null = null, sharedState: any = null, initialCalculationMode: 'bareme' | 'reels' | null = null) {
     const { safeGetLocalStorage } = useLocalStorage()
     const persistence = useCalculatorPersistence({ sharedState })
     const readInitialValue = (key, fallback, storageKey = `${STORAGE_PREFIX}${key}`) => {
@@ -284,6 +284,7 @@ export function useCalculator(initialMode = null, sharedState = null, initialCal
             meetingPoints: meetingPoints.value, calcMode: calcMode.value, fuelPrice: fuelPrice.value,
             fuelConsumption: fuelConsumption.value, baremeRate: baremeRate.value, selectedFuelType: selectedFuelType.value
         }, inputMode.value).toString()
+        url.searchParams.set('mode', calcMode.value)
         try {
             if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url.toString())
             else {

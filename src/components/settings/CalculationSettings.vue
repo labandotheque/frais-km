@@ -128,9 +128,13 @@ const {
 } = calculator
 
 const setCalculationMode = (mode: string) => {
+    const params = { ...route.params }
+    delete params.calculationMode
+    const query = { ...route.query, mode, calculationMode: undefined }
     router.replace({
         name: route.name as string,
-        params: { ...route.params, calculationMode: mode }
+        params,
+        query
     })
 }
 

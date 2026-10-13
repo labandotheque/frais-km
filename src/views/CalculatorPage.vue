@@ -61,12 +61,12 @@ const route = useRoute()
 
 // Initialisation du calculateur et injection globale
 const sharedState = parseCalculatorState(window.location.search)
-const routeCalcParam = route.params.calculationMode
-const routeCalculationMode = ['bareme', 'reels'].includes(routeCalcParam as string)
-  ? (routeCalcParam as 'bareme' | 'reels')
-  : null
+const getRouteCalculationMode = () => {
+  const mode = route.query.mode ?? route.query.calculationMode ?? route.params.calculationMode
+  return ['bareme', 'reels'].includes(mode as string) ? mode as 'bareme' | 'reels' : null
+}
 
-const calculator = useCalculator(props.mode, sharedState, routeCalculationMode)
+const calculator = useCalculator(props.mode, sharedState, getRouteCalculationMode())
 provide('calculator', calculator)
 
 // Extraction unique du nécessaire pour le template
@@ -74,14 +74,15 @@ const { inputMode, resetData, shareTrip } = calculator
 inputMode.value = props.mode
 
 // Gestion des modes de calcul via la route (simplifiée)
-const applyRouteCalculationMode = (mode: unknown) => {
+const applyRouteCalculationMode = () => {
+  const mode = getRouteCalculationMode()
   if (mode === 'bareme' || mode === 'reels') {
     calculator.calcMode.value = mode
     // Le chargement du carburant est maintenant géré directement dans CalculationSettings via le watch sur calcMode
   }
 }
 
-applyRouteCalculationMode(route.params.calculationMode)
+applyRouteCalculationMode()
 
 // Watchers
 watch(
@@ -92,5 +93,5 @@ watch(
   { immediate: true }
 )
 
-watch(() => route.params.calculationMode, applyRouteCalculationMode)
+watch(() => [route.query.mode, route.query.calculationMode, route.params.calculationMode], applyRouteCalculationMode)
 </script>
