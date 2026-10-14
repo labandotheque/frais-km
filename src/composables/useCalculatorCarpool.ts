@@ -19,26 +19,61 @@ export function useCalculatorCarpool({
     // Tous les appels à l'OSRM public passent par la file partagée (≤ 1 requête/s, cache, dédoublonnage)
     const osrm = (url) => osrmJson(url, safeFetchJson)
 
-    const getParticipantColorByName = (pName) => {
-        const p = participants.value.find(pp => pp.name === pName)
+    // ───────── Identité des participants
+    // La CLÉ STOCKÉE (meetingPoints[].participations / selectedDriver) est l'id : renommer quelqu'un ne casse rien.
+    // Le moteur de scénario (utils/carpool-scenario) raisonne sur des « libellés » : le nom, rendu unique
+    // (« Alice », « Alice (2) », « Participant 3 » si vide), recalculé à chaque appel à partir des ids.
+    const keyOf = (p) => String(p.id)
+    const labelTable = () => {
+        const used = new Set(), byId = {}, byLabel = {}
+        participants.value.forEach((p, i) => {
+            const base = (p.name || '').trim() || `Participant ${i + 1}`
+            let label = base, n = 2
+            while (used.has(label.toLowerCase())) label = `${base} (${n++})`
+            used.add(label.toLowerCase())
+            byId[keyOf(p)] = label
+            byLabel[label] = keyOf(p)
+        })
+        return { byId, byLabel }
+    }
+    const labelOf = (p) => labelTable().byId[keyOf(p)] ?? ''
+    const participantByLabel = (label) => {
+        const id = labelTable().byLabel[label]
+        return participants.value.find(p => keyOf(p) === id)
+    }
+    const getParticipantColorByName = (label) => {
+        const p = participantByLabel(label)
         return p ? getParticipantColor(p.id) : getParticipantColor(0)
     }
 
-    // ───────── Règles physiques du scénario (voir utils/carpoolScenario.ts)
+    // ───────── Règles physiques du scénario (voir utils/carpool-scenario.ts)
     // `selectedDriver` = propriétaire de la voiture qui repart de l'arrêt (« voiture de X »), pas forcément qui conduit.
-    const scenarioNames = () => participants.value.map(p => p.name)
-    const readCfgs = () => cfgsFromMeetingPoints(meetingPoints.value)
+    const scenarioNames = () => { const t = labelTable(); return participants.value.map(p => t.byId[keyOf(p)]) }
+    const readCfgs = () => {                                    // ids stockés -> libellés
+        const t = labelTable()
+        return cfgsFromMeetingPoints(meetingPoints.value).map(c => ({
+            driver: c.driver ? (t.byId[c.driver] ?? null) : null,
+            boarding: new Set([...c.boarding].map(k => t.byId[k]).filter(Boolean))
+        }))
+    }
+    const writeCfgs = (cfgs) => {                               // libellés -> ids stockés
+        const t = labelTable()
+        writeCfgsToMeetingPoints(meetingPoints.value, cfgs.map(c => ({
+            driver: c.driver ? (t.byLabel[c.driver] ?? null) : null,
+            boarding: new Set([...c.boarding].map(l => t.byLabel[l]).filter(Boolean))
+        })))
+    }
     const simulateAll = () => simulateScenario(scenarioNames(), readCfgs())
-    const roleOptions = (mIdx, pName) => roleAvailability(scenarioNames(), readCfgs(), mIdx, pName)
-    const changeRole = (mIdx, pName, role) => {                 // role : 'car' | 'passenger' | 'none'
-        const res = applyRole(scenarioNames(), readCfgs(), mIdx, pName, role)
-        writeCfgsToMeetingPoints(meetingPoints.value, res.cfgs)
+    const roleOptions = (mIdx, pLabel) => roleAvailability(scenarioNames(), readCfgs(), mIdx, pLabel)
+    const changeRole = (mIdx, pLabel, role) => {                // role : 'car' | 'passenger' | 'none'
+        const res = applyRole(scenarioNames(), readCfgs(), mIdx, pLabel, role)
+        writeCfgs(res.cfgs)
         debouncedRunVisualCarpoolRef(true)
         return res.adjustments
     }
     const fixScenario = () => {                                 // retire/complète ce qui est devenu impossible
         const res = repairScenario(scenarioNames(), readCfgs())
-        if (res.adjustments.length) { writeCfgsToMeetingPoints(meetingPoints.value, res.cfgs); debouncedRunVisualCarpoolRef(true) }
+        if (res.adjustments.length) { writeCfgs(res.cfgs); debouncedRunVisualCarpoolRef(true) }
         return res.adjustments
     }
     const notifyAdjustments = (adj) => { if (adj.length) showNotification(adj.join(' ')) }
@@ -46,20 +81,21 @@ export function useCalculatorCarpool({
     const getParticipantsAtMp = (mIdx) => {
         const mp = meetingPoints.value[mIdx]
         if (!mp.participations) return []
-        return participants.value.filter(p => mp.participations[p.name] === 'yes').map(p => p.name)
+        return participants.value.filter(p => mp.participations[keyOf(p)] === 'yes').map(labelOf)
     }
 
-    const isParticipantPassengerAtMp = (pName, mIdx) => {
+    const isParticipantPassengerAtMp = (pLabel, mIdx) => {
         const mp = meetingPoints.value[mIdx]
-        return mp.participations && mp.participations[pName] === 'yes'
+        const id = labelTable().byLabel[pLabel]
+        return !!(mp.participations && id !== undefined && mp.participations[id] === 'yes')
     }
 
     const getPassengersBoardingHere = (mIdx) => {
         const mp = meetingPoints.value[mIdx]
         if (!mp || !mp.participations) return []
         return participants.value
-            .filter(p => mp.participations[p.name] === 'yes' && p.name !== mp.selectedDriver)
-            .map(p => p.name)
+            .filter(p => mp.participations[keyOf(p)] === 'yes' && keyOf(p) !== mp.selectedDriver)
+            .map(labelOf)
     }
 
     const getPassengersFromPreviousSteps = (mIdx) => {
@@ -70,8 +106,8 @@ export function useCalculatorCarpool({
             const mp = meetingPoints.value[i]
             if (mp && mp.selectedDriver === currentDriver && mp.participations) {
                 const passengersAtI = participants.value
-                    .filter(p => mp.participations[p.name] === 'yes' && p.name !== mp.selectedDriver)
-                    .map(p => p.name)
+                    .filter(p => mp.participations[keyOf(p)] === 'yes' && keyOf(p) !== mp.selectedDriver)
+                    .map(labelOf)
                 list = list.concat(passengersAtI)
             }
         }
@@ -104,11 +140,11 @@ export function useCalculatorCarpool({
     }
 
     const removeParticipant = (idx) => {
-        const removedName = participants.value[idx].name
+        const removedKey = keyOf(participants.value[idx])
         participants.value.splice(idx, 1)
         meetingPoints.value.forEach(mp => {
-            if (mp.participations) delete mp.participations[removedName]
-            if (mp.selectedDriver === removedName) mp.selectedDriver = null
+            if (mp.participations) delete mp.participations[removedKey]
+            if (mp.selectedDriver === removedKey) mp.selectedDriver = null
         })
         notifyAdjustments(fixScenario())
         debouncedRunVisualCarpoolRef(true)
@@ -117,7 +153,7 @@ export function useCalculatorCarpool({
     const addMeetingPoint = () => {
         meetingPoints.value.push({
             query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1,
-            participations: {}, selectedDriver: null
+            participations: {}, selectedDriver: null, keyed: 'id'
         })
     }
 
@@ -170,16 +206,17 @@ export function useCalculatorCarpool({
             return
         }
 
-        const name = (i) => activeParts[i].name
+        const name = (i) => labelOf(activeParts[i])          // pour les messages
+        const key = (i) => keyOf(activeParts[i])             // pour le stockage
         const newMps = []
         for (const car of res.cars) {
-            const driverName = name(car.driver)
-            car.stops.forEach((stop, i) => {
-                const participations = { [driverName]: 'yes' }
-                stop.passengers.forEach(idx => { participations[name(idx)] = 'yes' })
+            const driverKey = key(car.driver)
+            car.stops.forEach((stop) => {
+                const participations = { [driverKey]: 'yes' }
+                stop.passengers.forEach(idx => { participations[key(idx)] = 'yes' })
                 newMps.push({
                     query: stop.label, suggestions: [], coords: stop.coords, selectedIndex: -1, edited: false,
-                    participations, selectedDriver: driverName
+                    participations, selectedDriver: driverKey, keyed: 'id'
                 })
             })
         }
@@ -212,15 +249,16 @@ export function useCalculatorCarpool({
     const buildJourney = (p, sim, solo = false) => {
         const nodes = [{ type: 'home', label: p.query, city: cityOf(p.query) }]
         const segments = []
-        let car = p.name
+        const me = labelOf(p)
+        let car = me
         if (!solo) {
             meetingPoints.value.forEach((mp, k) => {
                 const rec = sim.stops[k]
                 if (!mp.coords || !rec?.valid || !rec.owner) return
-                if (!(rec.owner === p.name || rec.boarding.includes(p.name) || rec.aboardBefore.includes(p.name))) return
+                if (!(rec.owner === me || rec.boarding.includes(me) || rec.aboardBefore.includes(me))) return
                 segments.push({ carOf: car })
                 nodes.push({ type: 'stop', index: k, label: mp.query, city: cityOf(mp.query) })
-                car = sim.carOfAfter[k][p.name]
+                car = sim.carOfAfter[k][me]
             })
         }
         segments.push({ carOf: car })
@@ -336,8 +374,8 @@ export function useCalculatorCarpool({
             return r ? { km: r.distance / 1000, latlngs: toLatLngs(r.geometry.coordinates) } : null
         }))
         parts.forEach((p, i) => {
-            km[p.name] = found[i]?.km ?? 0
-            roles[p.name] = 'solo'
+            km[labelOf(p)] = found[i]?.km ?? 0
+            roles[labelOf(p)] = 'solo'
             if (found[i]) {
                 ribbons.push({
                     latlngs: found[i].latlngs, color: getParticipantColor(p.id), weight: 4,
@@ -351,7 +389,7 @@ export function useCalculatorCarpool({
     // Covoiturage : voitures qui passent par les arrêts + trajets d'acheminement + ceux qui roulent seuls
     const planCarpoolMode = async (parts, sim, route) => {
         const km = {}, roles = {}, ribbons = []
-        parts.forEach(p => { km[p.name] = 0; roles[p.name] = 'solo' })
+        parts.forEach(p => { km[labelOf(p)] = 0; roles[labelOf(p)] = 'solo' })
         const hasCoords = (k) => !!meetingPoints.value[k]?.coords
         const destCoords = carpoolDestination.value.coords
 
@@ -366,8 +404,8 @@ export function useCalculatorCarpool({
         }
 
         for (const driverName of carpoolDrivers) {
-            const dp = participants.value.find(p => p.name === driverName && p.coords)
-            if (!dp) continue
+            const dp = participantByLabel(driverName)
+            if (!dp || !dp.coords) continue
             const driverMps = sim.cars[driverName].stops.filter(hasCoords).map(k => ({ mp: meetingPoints.value[k], index: k }))
             if (!driverMps.length) continue
 
@@ -388,16 +426,16 @@ export function useCalculatorCarpool({
 
             // Trajets pointillés d'acheminement des passagers jusqu'à leur point de prise en charge (leur propre route)
             for (const { mp, index } of driverMps) {
-                const arriving = participants.value.filter(p => p.coords && sim.stops[index].arriving.includes(p.name))
+                const arriving = participants.value.filter(p => p.coords && sim.stops[index].arriving.includes(labelOf(p)))
                 await Promise.all(arriving.map(async (p) => {
                     const d = await route([p.coords, mp.coords])
                     const rr = d?.routes?.[0]
                     if (!rr) return
-                    km[p.name] += rr.distance / 1000
-                    roles[p.name] = 'passenger'
+                    km[labelOf(p)] += rr.distance / 1000
+                    roles[labelOf(p)] = 'passenger'
                     ribbons.push({
                         latlngs: toLatLngs(rr.geometry.coordinates),
-                        color: getParticipantColorByName(p.name),
+                        color: getParticipantColor(p.id),
                         dash: true,
                         laneOffset: 0
                     })
@@ -407,15 +445,16 @@ export function useCalculatorCarpool({
 
         // Participants qui roulent seuls dans leur propre véhicule (sa propre route = pas de décalage)
         await Promise.all(parts.map(async (p) => {
-            const involved = sim.cars[p.name]?.stops?.some(hasCoords) || (sim.parkedAt[p.name] !== undefined && hasCoords(sim.parkedAt[p.name]))
+            const me = labelOf(p)
+            const involved = sim.cars[me]?.stops?.some(hasCoords) || (sim.parkedAt[me] !== undefined && hasCoords(sim.parkedAt[me]))
             if (involved) return
             const d = await route([p.coords, destCoords])
             const rr = d?.routes?.[0]
-            km[p.name] = rr ? rr.distance / 1000 : 0
+            km[me] = rr ? rr.distance / 1000 : 0
             if (rr) {
                 ribbons.push({
                     latlngs: toLatLngs(rr.geometry.coordinates),
-                    color: getParticipantColorByName(p.name),
+                    color: getParticipantColor(p.id),
                     laneOffset: 0
                 })
             }
@@ -425,14 +464,14 @@ export function useCalculatorCarpool({
 
     // résultats : données brutes uniquement, la vue décide de l'affichage
     const buildResults = (parts, plan, sim, solo) => parts.map((p) => {
-        const oneWay = plan.km[p.name] || 0
+        const oneWay = plan.km[labelOf(p)] || 0
         const finalKm = Math.round((isRoundTrip.value ? oneWay * 2 : oneWay) * 10) / 10
         const consumption = p.consumption !== undefined ? p.consumption : fuelConsumption.value
         const price = p.fuelPrice !== undefined ? p.fuelPrice : fuelPrice.value
         const toll = Number(p.toll || 0)
         const fuelCost = calcMode.value === 'bareme' ? finalKm * baremeRate.value : (finalKm / 100) * consumption * price
         return {
-            name: p.name, color: getParticipantColor(p.id), role: plan.roles[p.name],
+            id: p.id, name: labelOf(p), color: getParticipantColor(p.id), role: plan.roles[labelOf(p)],
             km: finalKm, liters: (finalKm * consumption) / 100, consumption, fuelPrice: price,
             fuelCost, toll, amount: fuelCost + toll,
             journey: buildJourney(p, sim, solo)
@@ -566,7 +605,7 @@ export function useCalculatorCarpool({
     }
 
     return {
-        getParticipantColor, getParticipantColorByName,
+        getParticipantColor, getParticipantColorByName, labelOf,
         getParticipantsAtMp, addParticipantToMp, removeParticipantFromMp, setDriver,
         getPassengersFromPreviousSteps, getPassengersBoardingHere,
         addParticipant, removeParticipant, addMeetingPoint, removeMeetingPoint,

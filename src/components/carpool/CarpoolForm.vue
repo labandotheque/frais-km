@@ -2,8 +2,8 @@
 <div v-if="inputMode === 'carpool'" class="space-y-4">
 
     <!-- Destination -->
-    <div class="relative z-30 bg-white border border-slate-200 rounded-2xl px-4 sm:px-5 py-4">
-        <div class="mb-3">
+    <div class="relative z-30 ">
+        <div class="mb-3 flex justify-between items-baseline">
             <h3 class="text-sm font-semibold text-slate-900">Destination</h3>
             <p class="text-xs text-slate-500">Où tout le monde se retrouve</p>
         </div>
