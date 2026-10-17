@@ -1,5 +1,5 @@
 <template>
-<div class="bg-white rounded-xl border border-slate-200/80 p-3.5">
+<div class="bg-white rounded-none border-0 p-3.5 md:rounded-xl md:border md:border-slate-200/80">
     <div class="flex items-center justify-between mb-2.5">
         <h3 class="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
             Aperçu des trajets

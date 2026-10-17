@@ -2,7 +2,7 @@
   <AppHeader />
   <Notification />
 
-  <div class="mx-auto max-w-6xl space-y-5 p-4 md:p-6">
+  <div class="mx-auto max-w-6xl space-y-5 md:p-6">
     <div class="grid grid-cols-1 items-start gap-5 md:grid-cols-12">
       <!-- Colonne gauche : Formulaire et paramètres -->
       <div class="space-y-5 md:col-span-7">

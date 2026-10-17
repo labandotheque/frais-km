@@ -1,5 +1,5 @@
 <template>
-<div class="bg-white rounded-xl border border-slate-200/80 p-5 space-y-4">
+<div class="bg-white rounded-none border-0 p-5 space-y-4 md:rounded-xl md:border md:border-slate-200/80">
 
     <h2 class="text-sm font-semibold text-slate-900 flex items-center gap-2">
         <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

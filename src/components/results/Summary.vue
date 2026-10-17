@@ -1,5 +1,5 @@
 <template>
-<div class="bg-slate-900 text-white rounded-xl p-5 space-y-4">
+<div class="bg-slate-900 text-white rounded-none p-5 space-y-4 md:rounded-xl">
 
     <!-- En-tête -->
     <div class="flex justify-between items-center border-b border-slate-800 pb-3">

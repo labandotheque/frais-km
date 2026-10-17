@@ -1,6 +1,6 @@
 <template>
   <!-- En-tête -->
-  <header class="bg-white border border-slate-200/80 px-4 py-3.5 sm:px-6 sm:py-5 flex flex-row items-center justify-between gap-3">
+  <header class="bg-white border border-slate-200/80 px-2 py-3.5 sm:px-6 sm:py-5 flex flex-row items-center justify-between gap-3">
 
     <!-- Titre et métadonnées -->
     <div class="min-w-0 flex-1">

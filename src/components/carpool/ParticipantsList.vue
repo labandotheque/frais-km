@@ -1,7 +1,7 @@
 <template>
-<div ref="root" class="relative z-20 bg-white border border-slate-200 rounded-2xl">
+<div ref="root" class="relative z-20 bg-white border-0 rounded-none md:border md:border-slate-200 md:rounded-2xl">
 
-    <div class="px-4 sm:px-5 pt-4 pb-3 flex items-center justify-between gap-3">
+    <div class="md:px-5 pt-4 pb-3 flex items-center justify-between gap-3">
         <div class="min-w-0">
             <h3 class="text-sm font-semibold text-slate-900">Participants</h3>
             <p class="text-xs text-slate-500">
@@ -17,7 +17,7 @@
         </button>
     </div>
 
-    <div class="px-4 sm:px-5 pb-4 space-y-2">
+    <div class="md:px-5 pb-4 space-y-2">
         <div v-for="(p, idx) in participants" :key="p.id" data-row>
             <div class="flex items-center gap-2">
 

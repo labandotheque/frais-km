@@ -6,7 +6,7 @@
         Paramètres individuels
     </label>
 
-    <div class=" rounded-xl border border-slate-200 bg-slate-50">
+    <div class="rounded-none border-0 bg-slate-50 md:rounded-xl md:border md:border-slate-200">
         <table class="w-full text-left border-collapse text-xs">
             <thead>
                 <tr class="border-b border-slate-200 text-[9px] text-slate-400 uppercase font-semibold bg-slate-100/70">
