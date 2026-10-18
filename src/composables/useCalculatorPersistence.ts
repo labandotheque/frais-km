@@ -1,60 +1,60 @@
 // @ts-nocheck
 import { watch } from 'vue'
+import { toPlainState } from '../utils/sharing'
 
 export const STORAGE_PREFIX = 'cfk_'
 
-const STORAGE_KEYS = {
-    inputMode: `${STORAGE_PREFIX}inputMode`,
-    waypoints: `${STORAGE_PREFIX}waypoints`,
-    manualKm: `${STORAGE_PREFIX}manualKm`,
-    isRoundTrip: `${STORAGE_PREFIX}isRoundTrip`,
-    globalToll: `${STORAGE_PREFIX}globalToll`,
-    carpoolDestination: `${STORAGE_PREFIX}carpoolDest`,
-    participants: `${STORAGE_PREFIX}participants`,
-    meetingPoints: `${STORAGE_PREFIX}meetingPoints`,
-    visualCarpoolResults: `${STORAGE_PREFIX}visualResults`,
-    calcMode: `${STORAGE_PREFIX}calcMode`,
-    fuelPrice: `${STORAGE_PREFIX}fuelPrice`,
-    fuelConsumption: `${STORAGE_PREFIX}fuelConsumption`,
-    baremeRate: `${STORAGE_PREFIX}baremeRate`,
-    selectedFuelType: `${STORAGE_PREFIX}selectedFuelType`
+// Un seul tableau pour tous les champs sauvegardés :
+//   key  : nom de la clé de stockage quand il diffère du champ (cfk_<champ> sinon)
+//   json : valeur structurée (sérialisée en JSON, sans les champs d'interface), sinon String(valeur)
+// Un champ absent d'ici est quand même sauvegardé (cfk_<champ>, en texte) mais ne serait pas effacé par removeAll :
+// ajouter ici tout nouveau champ persisté (c'était le cas de `tripMode`, qui survivait à la remise à zéro).
+const FIELDS = {
+    inputMode: {},
+    waypoints: { json: true },
+    manualKm: {},
+    isRoundTrip: {},
+    globalToll: {},
+    carpoolDestination: { key: 'carpoolDest', json: true },
+    participants: { json: true },
+    meetingPoints: { json: true },
+    visualCarpoolResults: { key: 'visualResults', json: true },
+    tripMode: {},
+    calcMode: {},
+    fuelPrice: {},
+    fuelConsumption: {},
+    baremeRate: {},
+    selectedFuelType: {}
 }
 
-const serializers = {
-    inputMode: String,
-    waypoints: JSON.stringify,
-    manualKm: String,
-    isRoundTrip: String,
-    globalToll: String,
-    carpoolDestination: JSON.stringify,
-    participants: JSON.stringify,
-    meetingPoints: JSON.stringify,
-    visualCarpoolResults: JSON.stringify,
-    calcMode: String,
-    fuelPrice: String,
-    fuelConsumption: String,
-    baremeRate: String,
-    selectedFuelType: String
-}
+const storageKey = (field) => `${STORAGE_PREFIX}${FIELDS[field]?.key ?? field}`
+const serialize = (field, value) => FIELDS[field]?.json ? JSON.stringify(toPlainState(field, value)) : String(value)
+
+const STORAGE_KEYS = Object.fromEntries(Object.keys(FIELDS).map(field => [field, storageKey(field)]))
 
 export function useCalculatorPersistence({ sharedState = null } = {}) {
+    // Avec un lien de partage, rien n'est écrit tant que l'utilisateur n'a pas modifié un champ (voir markDirtyAndPersist)
     let storageEnabled = !sharedState
-    const dirtyFields = new Set()
     let resetInProgress = false
+    const dirtyFields = new Set()
 
     const isResetInProgress = () => resetInProgress
     const setResetInProgress = (value) => { resetInProgress = value }
+    const isStorageEnabled = () => storageEnabled
 
     const markDirty = (field) => {
-        if (resetInProgress) return
-        dirtyFields.add(field)
+        if (!resetInProgress) dirtyFields.add(field)
     }
 
     const persistField = (field, value) => {
         if (!storageEnabled || resetInProgress || !dirtyFields.has(field)) return
-        const serializer = serializers[field] || String
-        localStorage.setItem(STORAGE_KEYS[field] || `${STORAGE_PREFIX}${field}`, serializer(value))
-        dirtyFields.delete(field)
+        try {
+            localStorage.setItem(storageKey(field), serialize(field, value))
+            dirtyFields.delete(field)
+        } catch (err) {
+            // quota dépassé, navigation privée… : on ne casse pas l'application pour une sauvegarde
+            console.warn(`Sauvegarde impossible (${field})`, err)
+        }
     }
 
     const persistDirty = (state) => {
@@ -65,8 +65,7 @@ export function useCalculatorPersistence({ sharedState = null } = {}) {
     }
 
     const enableStorage = () => {
-        if (resetInProgress) return
-        storageEnabled = true
+        if (!resetInProgress) storageEnabled = true
     }
 
     const markDirtyAndPersist = (field, value) => {
@@ -76,8 +75,7 @@ export function useCalculatorPersistence({ sharedState = null } = {}) {
         persistField(field, value)
     }
 
-    const isStorageEnabled = () => storageEnabled
-    const hasStoredValue = (field) => localStorage.getItem(STORAGE_KEYS[field] || `${STORAGE_PREFIX}${field}`) !== null
+    const hasStoredValue = (field) => localStorage.getItem(storageKey(field)) !== null
 
     const watchField = (source, field, options = {}) => {
         watch(source, (value) => markDirtyAndPersist(field, value), options)

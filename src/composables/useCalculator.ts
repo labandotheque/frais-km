@@ -11,12 +11,43 @@ import { useCalculatorCarpool } from './useCalculatorCarpool'
 import { safeFetchJson } from '../services/api'
 import { osrmJson } from '../utils/osrm'
 
+const DEFAULTS = { fuelPrice: 1.75, fuelConsumption: 6.5, baremeRate: 0.35 }
+
+// Paramètres de navigation d'une URL (« ?mode=reels ») : ils choisissent un affichage, ils ne transportent aucune donnée.
+const NAVIGATION_KEYS = new Set(['mode', 'inputMode', 'calcMode'])
+const hasSharedData = (s) => !!s && typeof s === 'object'
+    && Object.keys(s).some(k => !NAVIGATION_KEYS.has(k) && s[k] !== undefined && s[k] !== null && s[k] !== '')
+
+const copyToClipboard = async (text) => {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return }
+    const input = document.createElement('textarea')
+    input.value = text
+    document.body.appendChild(input)
+    input.select()
+    document.execCommand('copy')
+    input.remove()
+}
+
 export function useCalculator(initialMode: string | null = null, sharedState: any = null, initialCalculationMode: 'bareme' | 'reels' | null = null) {
+    // `sharedState` désactive TOUTE la persistance (lecture et écriture du localStorage) : il ne doit exister que pour un vrai
+    // lien de partage. Sans cette garde, `/covoiturage?mode=reels` produit un objet (même vide : `{}` est « truthy » en JS)
+    // et la sauvegarde cesse de fonctionner.
+    // `?mode=reels` (ou `bareme`) reste pris en compte comme mode de calcul, même si ce n'est pas un partage.
+    if (!initialCalculationMode && ['bareme', 'reels'].includes(sharedState?.calcMode)) initialCalculationMode = sharedState.calcMode
+    sharedState = hasSharedData(sharedState) ? sharedState : null
+
     const { safeGetLocalStorage } = useLocalStorage()
     const persistence = useCalculatorPersistence({ sharedState })
+
+    // ───────── Lecture de l'état initial (lien de partage > localStorage > valeur par défaut)
     const readInitialValue = (key, fallback, storageKey = `${STORAGE_PREFIX}${key}`) => {
         if (sharedState) return sharedState[key] ?? fallback
         return safeGetLocalStorage(storageKey, fallback)
+    }
+    const readNumber = (key, fallback) => Number(readInitialValue(key, fallback)) || fallback
+    const readBool = (key, fallback = false) => {
+        const v = readInitialValue(key, fallback)
+        return v === true || v === 'true'
     }
 
     const inputMode = ref(initialMode || 'cities')
@@ -25,61 +56,83 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
     const showFuelModal = ref(false)
     const selectedFuelType = ref(readInitialValue('selectedFuelType', 'gazole'))
 
+    let notificationTimer = null
     const showNotification = (msg) => {
         notification.value = { show: true, message: msg }
-        setTimeout(() => { notification.value.show = false }, 5000)
+        clearTimeout(notificationTimer)                     // une nouvelle notification ne doit pas être masquée par l'ancienne
+        notificationTimer = setTimeout(() => { notification.value.show = false }, 5000)
     }
 
-    let nextWaypointId = 1
-    const createWaypoint = (w = {}) => ({
-        id: nextWaypointId++, query: w.query || '', suggestions: [], coords: w.coords || null, selectedIndex: -1
+    // ───────── Champs d'adresse (étapes, destination) et participants
+    const emptyField = (src = {}) => ({
+        query: src.query || '', suggestions: [], coords: src.coords || null, isSelecting: false, selectedIndex: -1
     })
+
+    let nextWaypointId = 1
+    const createWaypoint = (w = {}) => ({ id: nextWaypointId++, ...emptyField(w) })
     const savedWaypoints = readInitialValue('waypoints', null)
-    const waypoints = ref(savedWaypoints ? savedWaypoints.map(createWaypoint) : [createWaypoint(), createWaypoint()])
+    const waypoints = ref(savedWaypoints ? savedWaypoints.map(w => createWaypoint(w)) : [createWaypoint(), createWaypoint()])
 
-    const manualKm = ref(Number(readInitialValue('manualKm', 0)) || 0)
-    const isRoundTrip = ref(readInitialValue('isRoundTrip', false) === true || readInitialValue('isRoundTrip', false) === 'true')
-    const globalToll = ref(Number(readInitialValue('globalToll', 0)) || 0)
+    const manualKm = ref(readNumber('manualKm', 0))
+    const isRoundTrip = ref(readBool('isRoundTrip'))
+    const globalToll = ref(readNumber('globalToll', 0))
 
-    const savedCd = readInitialValue('carpoolDestination', null, `${STORAGE_PREFIX}carpoolDest`)
-    const carpoolDestination = ref(savedCd ? {
-        query: savedCd.query || '', suggestions: [], coords: savedCd.coords || null, isSelecting: false, selectedIndex: -1
-    } : { query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1 })
+    const carpoolDestination = ref(emptyField(readInitialValue('carpoolDestination', null, `${STORAGE_PREFIX}carpoolDest`) || {}))
 
-    const savedParts = readInitialValue('participants', null)
-    const defaultFuelPrice = Number(readInitialValue('fuelPrice', 1.75)) || 1.75
-    const defaultFuelConsumption = Number(readInitialValue('fuelConsumption', 6.5)) || 6.5
+    const defaultFuelPrice = readNumber('fuelPrice', DEFAULTS.fuelPrice)
+    const defaultFuelConsumption = readNumber('fuelConsumption', DEFAULTS.fuelConsumption)
 
     let nextParticipantId = 1
-    const participants = ref(savedParts ? savedParts.map(p => {
-        const id = p.id !== undefined && p.id !== null ? p.id : nextParticipantId++
+    const createParticipant = (p = {}, fuel = { price: defaultFuelPrice, consumption: defaultFuelConsumption }) => {
+        const id = p.id ?? nextParticipantId
         nextParticipantId = Math.max(nextParticipantId, id + 1)
         return {
-            id,
-            name: p.name || '', query: p.query || '', suggestions: [], coords: p.coords || null, isSelecting: false, selectedIndex: -1,
-            consumption: p.consumption !== undefined ? p.consumption : defaultFuelConsumption,
-            fuelPrice: p.fuelPrice !== undefined ? p.fuelPrice : defaultFuelPrice,
+            id, ...emptyField(p), name: p.name || '',
+            consumption: p.consumption !== undefined ? p.consumption : fuel.consumption,
+            fuelPrice: p.fuelPrice !== undefined ? p.fuelPrice : fuel.price,
             fuelType: p.fuelType || 'gazole',
             toll: p.toll !== undefined ? p.toll : 0
         }
-    }) : [
-        { id: nextParticipantId++, name: 'Alice', query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1, consumption: defaultFuelConsumption, fuelPrice: defaultFuelPrice, fuelType: 'gazole', toll: 0 },
-        { id: nextParticipantId++, name: 'Bob', query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1, consumption: defaultFuelConsumption, fuelPrice: defaultFuelPrice, fuelType: 'gazole', toll: 0 }
-    ])
+    }
+    const savedParts = readInitialValue('participants', null)
+    const participants = ref(savedParts
+        ? savedParts.map(p => createParticipant(p))
+        : [createParticipant({ name: 'Alice' }), createParticipant({ name: 'Bob' })])
 
+    // ───────── Arrêts : le scénario (qui conduit, qui monte) est indexé par l'ID des participants, pas par leur nom,
+    // pour que renommer quelqu'un ne casse rien. Anciennes sauvegardes et anciens liens de partage (clés = noms) :
+    // convertis au chargement. La conversion ne dépend pas du marqueur `keyed` : une clé qui est déjà un id existant est
+    // conservée, sinon on cherche un participant de ce nom.
+    const idKeys = new Set(participants.value.map(p => String(p.id)))
+    const idByName = new Map(participants.value.map(p => [p.name, String(p.id)]))
+    const loadMeetingPoint = (mp) => {
+        const strict = mp.keyed === 'id'
+        const toKey = (k) => {
+            const s = String(k)
+            if (idKeys.has(s)) return s
+            return strict ? null : (idByName.get(k) ?? null)
+        }
+        const participations = {}
+        for (const [k, v] of Object.entries(mp.participations || {})) {
+            const id = toKey(k)
+            if (id !== null) participations[id] = v
+        }
+        return {
+            ...emptyField(mp), participations,
+            selectedDriver: mp.selectedDriver ? toKey(mp.selectedDriver) : null, keyed: 'id'
+        }
+    }
     const savedMps = readInitialValue('meetingPoints', null)
-    const meetingPoints = ref(savedMps ? savedMps.map(mp => ({
-        query: mp.query || '', suggestions: [], coords: mp.coords || null, isSelecting: false, selectedIndex: -1,
-        participations: mp.participations || {}, selectedDriver: mp.selectedDriver || null
-    })) : [])
+    const meetingPoints = ref(savedMps ? savedMps.map(loadMeetingPoint) : [])
 
+    // ───────── Résultats et réglages de calcul
     const visualCarpoolResults = ref(sharedState ? [] : safeGetLocalStorage(`${STORAGE_PREFIX}visualResults`, []))
-    const tripMode = ref(readInitialValue('tripMode', 'carpool') === 'solo' ? 'solo' : 'carpool')   // covoiturage ou tout le monde seul (les arrêts sont conservés)
+    const tripMode = ref(readInitialValue('tripMode', 'carpool') === 'solo' ? 'solo' : 'carpool')   // covoiturage, ou tout le monde seul (les arrêts sont conservés)
     const tripTotals = ref({ carpool: null, solo: null })                                              // total des deux modes, pour comparer
     const calcMode = ref(initialCalculationMode || readInitialValue('calcMode', 'bareme'))
     const fuelPrice = ref(defaultFuelPrice)
     const fuelConsumption = ref(defaultFuelConsumption)
-    const baremeRate = ref(Number(readInitialValue('baremeRate', 0.35)) || 0.35)
+    const baremeRate = ref(readNumber('baremeRate', DEFAULTS.baremeRate))
     const oneWayKm = ref(0)
     const loading = ref(false)
     const error = ref('')
@@ -94,6 +147,10 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
         clearTimeout(recalcTimer)
         if (immediate) { runVisualCarpool(fitMap); return }
         recalcTimer = setTimeout(() => runVisualCarpool(fitMap), 400)
+    }
+    // Recalcul du covoiturage, seulement si on est dans ce mode
+    const rerunCarpool = (immediate = false, fitMap = true) => {
+        if (inputMode.value === 'carpool') debouncedRunVisualCarpool(immediate, fitMap)
     }
 
     const fuelApi = useCalculatorFuel({
@@ -111,16 +168,14 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
     })
     runVisualCarpool = carpoolApi.runVisualCarpool
 
+    // ───────── Trajet « villes » (A → B → C…)
     const totalDistanceKm = computed(() => {
         const base = inputMode.value === 'km' ? Number(manualKm.value || 0) : oneWayKm.value
         return isRoundTrip.value ? base * 2 : base
     })
-    const totalDistanceAmount = computed(() => {
-        let baseVal = 0
-        if (calcMode.value === 'bareme') baseVal = totalDistanceKm.value * baremeRate.value
-        else baseVal = (totalDistanceKm.value / 100) * fuelConsumption.value * fuelPrice.value
-        return baseVal
-    })
+    const totalDistanceAmount = computed(() => calcMode.value === 'bareme'
+        ? totalDistanceKm.value * baremeRate.value
+        : (totalDistanceKm.value / 100) * fuelConsumption.value * fuelPrice.value)
     const finalAmount = computed(() => totalDistanceAmount.value + Number(globalToll.value || 0))
     const totalVisualCarpoolAmount = computed(() => visualCarpoolResults.value.reduce((acc, curr) => acc + curr.amount, 0))
 
@@ -174,23 +229,17 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
         handleCalculate()
     }
 
-    // La persistance est volontairement branchée champ par champ : un dirty ne réécrit que sa propre clé.
-    persistence.watchField(inputMode, 'inputMode')
-    persistence.watchField(waypoints, 'waypoints', { deep: true })
-    persistence.watchField(manualKm, 'manualKm')
-    persistence.watchField(isRoundTrip, 'isRoundTrip')
-    persistence.watchField(globalToll, 'globalToll')
-    persistence.watchField(carpoolDestination, 'carpoolDestination', { deep: true })
-    persistence.watchField(participants, 'participants', { deep: true })
-    persistence.watchField(meetingPoints, 'meetingPoints', { deep: true })
-    persistence.watchField(visualCarpoolResults, 'visualCarpoolResults', { deep: true })
-    persistence.watchField(tripMode, 'tripMode')
-    persistence.watchField(calcMode, 'calcMode')
-    persistence.watchField(fuelPrice, 'fuelPrice')
-    persistence.watchField(fuelConsumption, 'fuelConsumption')
-    persistence.watchField(baremeRate, 'baremeRate')
-    persistence.watchField(selectedFuelType, 'selectedFuelType')
+    // ───────── Persistance : branchée champ par champ (un changement ne réécrit que sa propre clé)
+    const PERSISTED_FIELDS = [
+        ['inputMode', inputMode], ['waypoints', waypoints, true], ['manualKm', manualKm], ['isRoundTrip', isRoundTrip],
+        ['globalToll', globalToll], ['carpoolDestination', carpoolDestination, true], ['participants', participants, true],
+        ['meetingPoints', meetingPoints, true], ['visualCarpoolResults', visualCarpoolResults, true], ['tripMode', tripMode],
+        ['calcMode', calcMode], ['fuelPrice', fuelPrice], ['fuelConsumption', fuelConsumption],
+        ['baremeRate', baremeRate], ['selectedFuelType', selectedFuelType]
+    ]
+    PERSISTED_FIELDS.forEach(([key, source, deep]) => persistence.watchField(source, key, deep ? { deep: true } : undefined))
 
+    // ───────── Réactions : tout ce qui change le résultat relance le calcul du covoiturage
     let oldDestCoords = carpoolDestination.value.coords ? { ...carpoolDestination.value.coords } : null
     watch(() => carpoolDestination.value.coords, (newCoords) => {
         if (newCoords && inputMode.value === 'carpool') {
@@ -200,18 +249,24 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
             }
         } else if (!newCoords) oldDestCoords = null
     })
-    watch(tripMode, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool(true, false) })
-    watch(isRoundTrip, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool(true) })
-    watch(carpoolDestination, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() }, { deep: true })
-    watch(participants, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() }, { deep: true })
-    watch(meetingPoints, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() }, { deep: true })
+    watch(tripMode, () => rerunCarpool(true, false))                    // changer de mode ne recadre pas la carte
+    watch(isRoundTrip, () => rerunCarpool(true))
+    watch([carpoolDestination, participants, meetingPoints], () => rerunCarpool(), { deep: true })
     watch(calcMode, (v) => {
-        if (inputMode.value === 'carpool') debouncedRunVisualCarpool(true)
+        rerunCarpool(true)
         if (v === 'reels') fuelApi.ensureFuelPrice()
     })
-    watch(fuelPrice, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() })
-    watch(fuelConsumption, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() })
-    watch(baremeRate, () => { if (inputMode.value === 'carpool') debouncedRunVisualCarpool() })
+    watch([fuelPrice, fuelConsumption, baremeRate], () => rerunCarpool())
+
+    // ───────── Carte et cycle de vie
+    const syncMapSize = () => {
+        mapState.map?.invalidateSize(true)
+        requestAnimationFrame(() => mapState.map?.invalidateSize(true))
+    }
+    const startForMode = () => {
+        if (inputMode.value === 'cities') handleCalculate()
+        else if (inputMode.value === 'carpool') runVisualCarpool()
+    }
 
     onMounted(() => {
         document.addEventListener('click', addressApi.handleDocumentClick)
@@ -219,10 +274,9 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
         if (!initialMode && savedMode) inputMode.value = savedMode
         nextTick(() => {
             mapApi.initializeMap()
-            requestAnimationFrame(() => mapState.map?.invalidateSize(true))
+            syncMapSize()
             fuelApi.ensureFuelPrice()
-            if (inputMode.value === 'cities') handleCalculate()
-            else if (inputMode.value === 'carpool') runVisualCarpool()
+            startForMode()
         })
     })
 
@@ -234,46 +288,41 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
         }
         nextTick(() => {
             mapApi.initializeMap()
-            if (mapState.map) {
-                mapState.map.invalidateSize(true)
-                requestAnimationFrame(() => mapState.map?.invalidateSize(true))
-            }
-            if (inputMode.value === 'cities') handleCalculate()
-            else if (inputMode.value === 'carpool') runVisualCarpool()
+            syncMapSize()
+            startForMode()
         })
     })
 
     onUnmounted(() => {
         document.removeEventListener('click', addressApi.handleDocumentClick)
         clearTimeout(recalcTimer)
+        clearTimeout(notificationTimer)
         mapApi.destroyMap()
     })
 
+    // ───────── Remise à zéro / partage
     const resetData = () => {
-        if (confirm("Voulez-vous effacer toutes les données enregistrées ?")) {
-            persistence.setResetInProgress(true)
-            persistence.removeAll()
-            waypoints.value = [createWaypoint(), createWaypoint()]
-            manualKm.value = 0
-            isRoundTrip.value = false
-            globalToll.value = 0
-            carpoolDestination.value = { query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1 }
-            participants.value = [
-                { id: 1, name: 'Alice', query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1, consumption: 6.5, fuelPrice: 1.75, fuelType: 'gazole', toll: 0 },
-                { id: 2, name: 'Bob', query: '', suggestions: [], coords: null, isSelecting: false, selectedIndex: -1, consumption: 6.5, fuelPrice: 1.75, fuelType: 'gazole', toll: 0 }
-            ]
-            meetingPoints.value = []
-            tripMode.value = 'carpool'
-            visualCarpoolResults.value = []
-            selectedParticipantToAdd.value = {}
-            calcMode.value = 'bareme'
-            fuelPrice.value = 1.75
-            fuelConsumption.value = 6.5
-            baremeRate.value = 0.35
-            selectedFuelType.value = 'gazole'
-            const cleanPath = window.location.pathname.replace(/\/(bareme|reels)$/, '') || '/'
-            window.location.replace(cleanPath)
-        }
+        if (!confirm("Voulez-vous effacer toutes les données enregistrées ?")) return
+        persistence.setResetInProgress(true)
+        persistence.removeAll()
+        const fuel = { price: DEFAULTS.fuelPrice, consumption: DEFAULTS.fuelConsumption }
+        waypoints.value = [createWaypoint(), createWaypoint()]
+        manualKm.value = 0
+        isRoundTrip.value = false
+        globalToll.value = 0
+        carpoolDestination.value = emptyField()
+        nextParticipantId = 1                               // Alice et Bob repartent des ids 1 et 2 (couleurs d'origine)
+        participants.value = [createParticipant({ name: 'Alice' }, fuel), createParticipant({ name: 'Bob' }, fuel)]
+        meetingPoints.value = []
+        tripMode.value = 'carpool'
+        visualCarpoolResults.value = []
+        selectedParticipantToAdd.value = {}
+        calcMode.value = 'bareme'
+        fuelPrice.value = DEFAULTS.fuelPrice
+        fuelConsumption.value = DEFAULTS.fuelConsumption
+        baremeRate.value = DEFAULTS.baremeRate
+        selectedFuelType.value = 'gazole'
+        window.location.replace(window.location.pathname.replace(/\/(bareme|reels)$/, '') || '/')
     }
 
     const shareTrip = async () => {
@@ -285,15 +334,7 @@ export function useCalculator(initialMode: string | null = null, sharedState: an
             fuelConsumption: fuelConsumption.value, baremeRate: baremeRate.value, selectedFuelType: selectedFuelType.value
         }, inputMode.value).toString()
         try {
-            if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url.toString())
-            else {
-                const input = document.createElement('textarea')
-                input.value = url.toString()
-                document.body.appendChild(input)
-                input.select()
-                document.execCommand('copy')
-                input.remove()
-            }
+            await copyToClipboard(url.toString())
             showNotification('Lien de partage copié dans le presse-papiers.')
         } catch {
             showNotification('Impossible de copier le lien de partage.')
